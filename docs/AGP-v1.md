@@ -42,6 +42,9 @@ task.
     "metrics": { "N_final": 1.23e9, "doubling_days": 14.6, "...": "..." },
     "scientific_hash": "sha256:..."
   },
+  "performance": {
+    "execution_time_ms": 847.213
+  },
   "security": {
     "payload_hash": "sha256:...",
     "results_scientific_hash": "sha256:...",
@@ -67,7 +70,8 @@ task.
 | `reproducibility.package_manifest_hash` | string | SHA-256 of the pinned Manifest.toml. |
 | `results.metrics` | object | Float/int scalars only — no trajectories. |
 | `results.scientific_hash` | string | `sha256(json.dumps(metrics, sorted))`. |
-| `security.payload_hash` | string | `sha256(canonical_json({header,payload,reproducibility,results}))`. |
+| `performance.execution_time_ms` | float | Engine wall-clock for the compute block, reported by Julia. **Informational** — deliberately NOT covered by `payload_hash` because wall-clock varies across hardware. Consumed by `PoUW / t_exec` in the Trust Score. |
+| `security.payload_hash` | string | `sha256(canonical_json({header,payload,reproducibility,results}))` — note `performance` is excluded. |
 | `security.pow_nonce` | int | Nonce that solves PoW difficulty. |
 | `security.pow_hash` | string | `sha256(f"{payload_hash}:{nonce}")`, leading zeros ≥ difficulty. |
 | `security.consensus_status` | enum | `PENDING` → `VALIDATED` → `FINALIZED` or `REJECTED`. |

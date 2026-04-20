@@ -72,6 +72,8 @@ class SentinelConfig:
     default_task: str
     agp_protocol_version: str
     freeze_julia_version: str
+    accept_agpl_license: bool
+    accept_prometeo_clause: bool
     raw: dict[str, Any] = field(repr=False, default_factory=dict)
 
     @classmethod
@@ -80,6 +82,7 @@ class SentinelConfig:
         bootstrap = [
             _parse_peer(p) for p in raw.get("gossip", {}).get("bootstrap_peers", [])
         ]
+        ethics = raw.get("ethics", {})
         return cls(
             guardian_id=raw["identity"]["guardian_id"],
             gpu_model=raw["hardware"]["gpu_model"],
@@ -95,6 +98,8 @@ class SentinelConfig:
             default_task=raw["mission"]["default_task"],
             agp_protocol_version=raw["agp"]["protocol_version"],
             freeze_julia_version=raw["agp"]["freeze_julia_version"],
+            accept_agpl_license=bool(ethics.get("accept_agpl_license", False)),
+            accept_prometeo_clause=bool(ethics.get("accept_prometeo_clause", False)),
             raw=raw,
         )
 
@@ -133,6 +138,7 @@ class Sentinel:
         LOG.info("AETERNA Sentinel v%s — waking up %s", SENTINEL_VERSION, self.cfg.guardian_id)
         LOG.info("=" * 60)
 
+        self._verify_ethics_consent()
         self._check_gpu()
         self._sign_manifesto()
 
@@ -154,6 +160,37 @@ class Sentinel:
         LOG.info("gossip bound on :%d (fanout=%d, ttl=%d, peers=%d)",
                  self.cfg.gossip_port, self.cfg.gossip_fanout,
                  self.cfg.gossip_ttl, len(self.cfg.bootstrap_peers))
+
+    def _verify_ethics_consent(self) -> None:
+        """Hard boot gate — Sovranità Finale.
+
+        The Sentinel refuses to awaken unless the operator has explicitly
+        acknowledged both the AGPLv3 license and the Prometheus Clause in
+        ``aeterna.toml``. This is not a click-through EULA: the signed
+        Manifesto embedded in the Identity SBT (v0.1.0) will reference these
+        flags, making the consent cryptographically binding rather than
+        merely contractual.
+        """
+        missing: list[str] = []
+        if not self.cfg.accept_agpl_license:
+            missing.append("accept_agpl_license")
+        if not self.cfg.accept_prometeo_clause:
+            missing.append("accept_prometeo_clause")
+        if missing:
+            LOG.error("=" * 60)
+            LOG.error("ETHICS GATE CLOSED — refusing to boot.")
+            LOG.error("")
+            LOG.error("The Guardian may not run until the operator has read")
+            LOG.error("  LICENSE    (AGPLv3)")
+            LOG.error("  ETHICS.md  (Prometheus Clause)")
+            LOG.error("and set the following flags to ``true`` in aeterna.toml:")
+            for k in missing:
+                LOG.error("  [ethics] %s", k)
+            LOG.error("")
+            LOG.error("This is Axiom I — Sovranità Finale. No override exists.")
+            LOG.error("=" * 60)
+            raise SystemExit(3)
+        LOG.info("ethics gate passed: AGPLv3 + Prometheus Clause acknowledged")
 
     def _check_gpu(self) -> None:
         try:
@@ -269,6 +306,10 @@ class Sentinel:
             "metrics": result.get("metrics", {}),
             "scientific_hash": result.get("scientific_hash"),
         }
+        # Engine-reported timings are informational and intentionally EXCLUDED
+        # from payload_hash — wall-clock ms varies across hardware and would
+        # defeat deterministic consensus if it entered the hashed body.
+        performance_block = dict(result.get("performance", {}) or {})
         payload_hash = _canonical_sha256({
             "header": header,
             "payload": payload_body,
@@ -280,6 +321,7 @@ class Sentinel:
             "payload": payload_body,
             "reproducibility": reproducibility,
             "results": results_block,
+            "performance": performance_block,
             "security": {
                 "payload_hash": payload_hash,
                 "results_scientific_hash": results_block["scientific_hash"],

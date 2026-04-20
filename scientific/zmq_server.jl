@@ -51,6 +51,7 @@ function dispatch(req::AbstractDict)::Dict{String, Any}
     seed = get(repro, "seed_rng", 424242)
     Random.seed!(seed)
 
+    t_start = time_ns()
     metrics = if kind == "genome_analysis"
         OncologySim.analizza_genoma(String(get(params, "sequence", "")))
     elseif kind == "genomic_entropy"
@@ -86,6 +87,7 @@ function dispatch(req::AbstractDict)::Dict{String, Any}
     else
         throw(ArgumentError("tipo_analisi sconosciuto: $(kind)"))
     end
+    t_elapsed_ms = (time_ns() - t_start) / 1e6
 
     sci_hash = scientific_hash(metrics)
 
@@ -96,6 +98,9 @@ function dispatch(req::AbstractDict)::Dict{String, Any}
         "seed_rng"           => seed,
         "metrics"            => metrics,
         "scientific_hash"    => sci_hash,
+        "performance"        => Dict{String, Any}(
+            "execution_time_ms" => round(t_elapsed_ms, digits=3),
+        ),
     )
 end
 

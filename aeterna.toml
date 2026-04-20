@@ -28,6 +28,14 @@ hardware_binding         = true
 tee_backend              = "tpm2"             # tpm2 | sev | sgx | secure_enclave
 min_trust_level_boot     = "guardiano"        # osservatore | guardiano | saggio | architetto
 
+[ethics]
+# Hard boot gate. The Sentinel refuses to awaken if either field is false.
+# Set to true ONLY after reading LICENSE (AGPLv3) and ETHICS.md (Prometheus Clause).
+# This is not a click-through EULA: the signed Manifesto in the Identity SBT
+# references these flags, so the commitment is cryptographic, not contractual.
+accept_agpl_license      = false
+accept_prometeo_clause   = false
+
 [hardware]
 # Reference target. Other GPUs supported but Missione Alpha benchmarks assume
 # this configuration.
