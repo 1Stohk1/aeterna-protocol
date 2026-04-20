@@ -33,8 +33,8 @@ min_trust_level_boot     = "guardiano"        # osservatore | guardiano | saggio
 # Set to true ONLY after reading LICENSE (AGPLv3) and ETHICS.md (Prometheus Clause).
 # This is not a click-through EULA: the signed Manifesto in the Identity SBT
 # references these flags, so the commitment is cryptographic, not contractual.
-accept_agpl_license      = false
-accept_prometeo_clause   = false
+accept_agpl_license      = true
+accept_prometeo_clause   = true
 
 [hardware]
 # Reference target. Other GPUs supported but Missione Alpha benchmarks assume
