@@ -1,0 +1,142 @@
+# ============================================================================
+#  AETERNA — Canonical Node Configuration
+#  Version: AGP-v1 / Node v0.0.1 "Genesis"
+# ----------------------------------------------------------------------------
+#  This file is the single source of truth for a Guardian node. Every entry
+#  below is read by core/sentinel.py at boot and, in later releases, by the
+#  Rust Santuario. DO NOT edit while the node is running — the Sentinel will
+#  reject hot-mutations and emit an Axiom-II (Integrità Speculare) violation.
+#
+#  Local overrides belong in aeterna.local.toml (gitignored). Values here are
+#  the audited defaults for Missione Alpha.
+# ============================================================================
+
+[identity]
+# The Guardian's public identifier. Prometheus-0 is reserved for the genesis
+# reference node on the RTX 5070. Downstream deployments MUST rename.
+guardian_id              = "Prometheus-0"
+network                  = "aeterna-testnet-0"
+
+# Post-quantum cryptographic primitives for signature and key encapsulation.
+# These match the Manifesto signature format.
+pqc_sig_algorithm        = "Dilithium-5"      # ML-DSA, NIST Level 5
+pqc_kem_algorithm        = "Kyber-1024"       # ML-KEM, NIST Level 5
+
+# Hardware binding requirement for the identity. The Sentinel refuses to start
+# if the attestation cannot be produced.
+hardware_binding         = true
+tee_backend              = "tpm2"             # tpm2 | sev | sgx | secure_enclave
+min_trust_level_boot     = "guardiano"        # osservatore | guardiano | saggio | architetto
+
+[hardware]
+# Reference target. Other GPUs supported but Missione Alpha benchmarks assume
+# this configuration.
+gpu_model                = "RTX 5070"
+vram_gb                  = 12
+vram_reserved_pct        = 15                 # Kept for OS/driver
+cpu_stress_abort_pct     = 90                 # β threshold — triggers soft migration
+cpu_stress_window_min    = 10
+enable_smart_heating     = true               # Economia del Calcolo — seasonal thermal policy
+
+[sentinel]
+# Python userland orchestrator — core/sentinel.py
+bind_host                = "0.0.0.0"
+heartbeat_sec            = 30
+pow_difficulty           = 4                  # Leading zero bits on SHA-256
+harvest_strategy         = "gossip"           # gossip | mock_broker (tests only)
+log_level                = "info"             # debug | info | warn | error
+
+[sentinel.zmq]
+# Bridge to the Julia scientific engine (scientific/zmq_server.jl).
+endpoint                 = "tcp://localhost:5555"
+send_timeout_ms          = 30_000
+recv_timeout_ms          = 600_000            # Folding can take minutes
+
+[gossip]
+# AeternaGossipNet — pure UDP P2P. No Redis, no central broker.
+port                     = 4444
+buffer_bytes             = 65_535
+seen_cache_size          = 10_000             # Anti-storm deduplication
+peer_discovery           = "bootstrap_list"   # bootstrap_list | dht (future)
+bootstrap_peers          = [
+    # "udp://<peer-ip>:4444",
+]
+fanout                   = 4                  # Peers a message is relayed to
+ttl                      = 7                  # Max gossip hops
+
+[santuario]
+# Rust kernel — stubbed in v0.0.1, wired in v0.1.0.
+enabled                  = false              # Flip to true once santuario-core is built
+isolation_mode           = "seccomp"          # seccomp (v0.1) | gvisor (v0.5) | firecracker (v1.0)
+kernel_filter            = "seccomp-bpf"
+ipc_transport            = "grpc_uds"         # gRPC over Unix Domain Sockets, encrypted
+ipc_socket               = "/run/aeterna/santuario.sock"
+
+[santuario.llm]
+# LLM subprocess residing inside the Rust Santuario.
+model_engine             = "llama.cpp"        # llama.cpp | candle
+model_name               = "Llama-3-8B-Instruct-Q4"
+model_cid                = ""                 # Populated after first IPFS pin (v0.5)
+max_tokens               = 4096
+temperature              = 0.3
+
+[vault]
+# Checkpoint and secret storage.
+storage_mode             = "local"            # local (v0.0.1 default) | ipfs (v0.5+)
+local_path               = "./santuario/vault/checkpoints"
+encryption               = "aes-256-gcm"
+key_derivation           = "tpm2_sealed"      # Key is never in plaintext RAM
+integrity_check_min      = 60                 # α threshold — hourly checksum audit
+portscan_abort_count     = 3                  # γ threshold — stealth migration trigger
+
+[nucleo]
+# Cognitive Trivium — enforced by the Santuario critic loop.
+reflexive_enabled        = true
+symbolic_validator       = true
+axiomatic_controller     = true
+episodic_memory_days     = 30
+semantic_memory_mode     = "vector_store"
+
+[prometeo]
+# Dual-use filter. Rejects tasks whose semantic analysis matches forbidden uses
+# from ETHICS.md Section 2.
+enabled                  = true
+dual_use_filter          = "semantic+rule"    # Hybrid classifier
+honeypot_rate            = 0.01               # Fraction of tasks intentionally flagged-as-bait
+
+[consensus]
+# Trust Score weights ω₁..ω₄ — live values will be governance-set post-genesis.
+omega_sybil              = 0.15
+omega_useful_work        = 0.40
+omega_cognition          = 0.30
+omega_integrity          = 0.15
+slash_lambda             = 0.25               # λ in TS_new = TS_current · (1 − λ·δ)
+
+[bitcoin_anchor]
+# Guardiani DAG → OP_RETURN anchoring. Disabled until v1.0.
+enabled                  = false
+epoch_blocks             = 10_000
+critical_event_triggers  = [
+    "global_model_cid_update",
+    "governance_omega_change",
+    "emergency_slash_major_validator",
+]
+
+[mission]
+# The active scientific mission for this node. Missione Alpha = oncology.
+active                   = "missione_alpha"
+default_task             = "tumor_growth_gompertz"
+
+[agp]
+# Aeterna Genomic Protocol version and reproducibility policy.
+protocol_version         = "AGP-v1"
+seed_source              = "sentinel"         # sentinel (canonical) | julia
+freeze_julia_version     = "1.10.2"
+require_manifest_hash    = true
+
+[logging]
+# All logs are structured JSON. The Santuario audit log is separate and append-only.
+format                   = "json"
+sentinel_log             = "./logs/sentinel.jsonl"
+audit_log                = "./logs/audit.jsonl"
+rotate_mb                = 50

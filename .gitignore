@@ -1,0 +1,80 @@
+# --- Python ---
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+env/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# --- Julia ---
+Manifest.toml
+/scientific/.CondaPkg/
+deps/usr/
+deps/deps.jl
+deps/build.log
+
+# --- Rust / Cargo (future santuario, chain) ---
+target/
+**/*.rs.bk
+Cargo.lock
+
+# --- Go (future chain via Cosmos SDK) ---
+/chain/bin/
+/chain/build/
+vendor/
+
+# --- Santuario: sensitive runtime artifacts ---
+# NEVER commit these. They are derived from the TPM and contain sovereignty.
+santuario/vault/
+santuario/keys/
+santuario/checkpoints/
+*.pem
+*.key
+*.kyber
+*.dilithium
+wallet.*
+
+# --- Models (LLM weights pulled at runtime) ---
+santuario-runtime/models/
+*.gguf
+*.safetensors
+
+# --- IDE / editors ---
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# --- Logs and local config overrides ---
+*.log
+logs/
+aeterna.local.toml
+.env
+.env.local
+
+# --- IPFS / storage caches ---
+.ipfs/
+pin_cache/

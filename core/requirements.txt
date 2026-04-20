@@ -1,0 +1,23 @@
+# AETERNA Sentinel — Python runtime dependencies for v0.0.1 Genesis.
+#
+# Hard rule: no centralized brokers, no cloud SDKs, no redis. If you need to
+# mock a message bus in tests, use core.testing.MockBroker (pure memory).
+
+pyzmq==26.0.3           # ZMQ bridge to Julia scientific engine
+tomli==2.0.1            # TOML parser for aeterna.toml (Python < 3.11 fallback)
+pydantic==2.7.1         # AGP-v1 payload validation
+cryptography==42.0.7    # SHA3, AES-GCM, X25519 fallback until PQ primitives wired
+numpy==1.26.4           # Shared ndarrays with Julia payloads
+
+# GPU probe — optional, but the Sentinel will degrade to CPU mode without it.
+# Install torch separately against your CUDA version:
+#   pip install torch --index-url https://download.pytorch.org/whl/cu124
+# torch>=2.3.0
+
+# Post-quantum primitives (Kyber, Dilithium). Pinned to a single mirror until
+# an in-tree liboqs wheel is published.
+# pyoqs==0.10.0         # Uncomment after liboqs is vendored in v0.1.0
+
+# Dev-only — never imported from production code paths.
+# pytest==8.2.0
+# hypothesis==6.100.0

@@ -1,0 +1,50 @@
+AETERNA Protocol
+Copyright (C) 2026  The AETERNA Guardians
+
+This program is free software: you can redistribute it and/or modify it under
+the terms of the GNU Affero General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option) any
+later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or FITNESS
+FOR A PARTICULAR PURPOSE.  See the GNU Affero General Public License for more
+details.
+
+The full text of the GNU Affero General Public License v3.0 is available at:
+https://www.gnu.org/licenses/agpl-3.0.txt
+
+--------------------------------------------------------------------------------
+
+                           THE PROMETHEUS CLAUSE
+                     (Legally binding addendum to AGPLv3)
+
+In addition to the obligations imposed by AGPLv3, any use, modification, or
+redistribution of this Software — in whole or in any derivative work, by any
+person or legal entity — is subject to the ethical restrictions defined in
+ETHICS.md, which forms an integral and inseparable part of this license.
+
+The Prometheus Clause prohibits, without limitation, the integration of this
+Software into:
+
+  (a) autonomous weapon targeting systems or lethal-autonomous-weapons
+      command-and-control pipelines;
+  (b) mass-surveillance systems operated by state actors, corporations, or
+      private intelligence contractors against civilian populations;
+  (c) systems whose primary economic function is the extraction of rent from
+      human suffering, including but not limited to predatory health-data
+      monetization of the oncology research outputs produced on this network;
+  (d) any system that removes, weakens, or circumvents the three Immutable
+      Axioms defined in MANIFESTO.md.
+
+The Prometheus Clause survives forking. Any derivative work must reproduce
+ETHICS.md verbatim and preserve its binding effect on its own downstream users.
+
+Violation of the Prometheus Clause automatically terminates all rights granted
+under AGPLv3 with respect to the infringing entity, without prejudice to any
+other remedy available in law or equity.
+
+--------------------------------------------------------------------------------
+
+See ETHICS.md for the full text of the Prometheus Clause and interpretive
+guidelines.
