@@ -172,27 +172,24 @@ scope drift — push back.
 | Julia/Python determinism breaks across OS | Low | High | Pin `Manifest.toml` aggressively; smoke test `scientific_hash` across Ubuntu LTS versions before Phase E |
 | Solo developer bandwidth | High | High | Phases are independent demos — partial sprint (A+B+C) is still a meaningful release |
 
-## 7. Executive decisions needed before coding starts
+## 7. Executive decisions — RATIFIED 2026-04-21
 
-These are the three micro-questions that would block Phase A if left
-unresolved. Decide them now, log them here, then don't re-open.
+The three micro-questions that gate Phase A are closed. Project standard.
+Reopening requires a documented architectural change request.
 
-1. **Rust toolchain pin** — MSRV (minimum supported Rust version)?
-   Proposal: `rust-toolchain.toml` pinned at 1.75, matches current
-   stable and covers `pqcrypto-dilithium` 0.5.x.
-2. **gRPC library** — `tonic` (pure Rust, async, ubiquitous) vs
-   `grpcio` (C++ based, more mature but uglier to build)?
-   Proposal: `tonic` + `prost` for the proto compiler. Self-contained,
-   no C++ toolchain needed, first-class UDS support.
-3. **Signature scope** — sign only `security.payload_hash`, or sign the
-   whole canonical payload again?
-   Proposal: sign `security.payload_hash` only. It's already the
-   SHA-256 of the canonical body, so signing it is equivalent and
-   keeps the signed object at 32 bytes — which matters for signature
-   size budget (Dilithium-5 sig is 4595 bytes already).
-
-If Christian disagrees with any of these, say so before Phase A starts.
-Otherwise they're locked.
+1. **Rust toolchain pin — MSRV 1.75.** `rust-toolchain.toml` pinned at
+   1.75.0. Stable channel only; no nightly features. Rationale: covers
+   `pqcrypto-dilithium` 0.5.x and gives cryptographic reproducibility
+   starting from the compiler itself.
+2. **gRPC library — `tonic` + `prost`.** Pure-Rust stack; no C/C++
+   toolchain dependency. First-class UDS support, which is non-
+   negotiable for the local IPC bridge between Python Sentinel and
+   Rust Santuario.
+3. **Signature scope — `security.payload_hash` only.** Already the
+   SHA-256 canonical fingerprint of the payload body, so signing it is
+   equivalent to signing the entire content. Keeps the signed object
+   at 32 bytes. Dilithium-5 produces a 4595-byte signature; avoiding
+   unnecessary payload duplication is vital for UDP gossip fluidity.
 
 ## 8. Release checklist
 

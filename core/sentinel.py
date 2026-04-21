@@ -153,7 +153,7 @@ class Sentinel:
         self.cfg = cfg
         self.manifesto_path = manifesto_path
 
-        self._ctx = zmq.Context.instance()
+        self._ctx = zmq.Context()
         self._zmq: zmq.Socket | None = None
         self._gossip: AeternaGossipNet | None = None
         self._santuario: SantuarioClient | None = None
@@ -179,15 +179,20 @@ class Sentinel:
         self._check_gpu()
         self._sign_manifesto()
 
-        self._santuario = SantuarioClient()
-        self._public_key = self._santuario.get_public_key()
-        LOG.info(f"Santuario signer connected. Pubkey len: {len(self._public_key)} bytes")
-
         self._zmq = self._ctx.socket(zmq.REQ)
         self._zmq.setsockopt(zmq.SNDTIMEO, self.cfg.zmq_send_timeout_ms)
         self._zmq.setsockopt(zmq.RCVTIMEO, self.cfg.zmq_recv_timeout_ms)
         self._zmq.connect(self.cfg.zmq_endpoint)
         LOG.info("ZMQ REQ → %s", self.cfg.zmq_endpoint)
+
+        if self.cfg.raw.get("santuario", {}).get("enabled", False):
+            self._santuario = SantuarioClient()
+            self._public_key = self._santuario.get_public_key()
+            LOG.info(f"Santuario signer connected. Pubkey len: {len(self._public_key)} bytes")
+        else:
+            self._santuario = None
+            self._public_key = b"stub_public_key"
+            LOG.warning("Santuario is disabled in aeterna.toml. Running in Genesis mode without signatures.")
 
         self._gossip = AeternaGossipNet(
             guardian_id=self.cfg.guardian_id,
@@ -298,7 +303,12 @@ class Sentinel:
             LOG.info("block broadcast mid=%s pow=%s…", mid[:12], block_hash[:12])
 
     def _sign_block(self, payload: dict[str, Any]) -> None:
-        assert self._santuario is not None
+        if self._santuario is None:
+            # Genesis mode: no signatures
+            payload["security"]["signature"] = ""
+            payload["security"]["public_key"] = ""
+            return
+
         assert self._public_key is not None
 
         payload_hash_hex = payload["security"]["payload_hash"]
@@ -517,7 +527,8 @@ class Sentinel:
             )
 
     def _verify_peer_block(self, payload: dict[str, Any]) -> tuple[bool, str]:
-        assert self._santuario is not None
+        if self._santuario is None:
+            return True, "genesis mode: signature verification bypassed"
 
         try:
             security = payload["security"]

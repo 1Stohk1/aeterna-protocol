@@ -3,7 +3,7 @@
 # Hard rule: no centralized brokers, no cloud SDKs, no redis. If you need to
 # mock a message bus in tests, use core.testing.MockBroker (pure memory).
 
-pyzmq==26.0.3           # ZMQ bridge to Julia scientific engine
+pyzmq==25.1.2           # ZMQ bridge to Julia scientific engine
 grpcio==1.80.0          # Python bridge to the Rust Santuario signer
 protobuf==6.31.1        # Runtime for generated Santuario gRPC stubs
 tomli==2.0.1            # TOML parser for aeterna.toml (Python < 3.11 fallback)

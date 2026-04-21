@@ -66,8 +66,7 @@ port                     = 4444
 buffer_bytes             = 65_535
 seen_cache_size          = 10_000             # Anti-storm deduplication
 peer_discovery           = "bootstrap_list"   # bootstrap_list | dht (future)
-bootstrap_peers          = [
-    # "udp://<peer-ip>:4444",
+bootstrap_peers          = ["udp://192.168.1.4:4444",
 ]
 rendezvous_hints         = [
     # "udp://<vps-ip>:4450",
@@ -77,7 +76,7 @@ ttl                      = 7                  # Max gossip hops
 
 [santuario]
 # Rust kernel — stubbed in v0.0.1, wired in v0.1.0.
-enabled                  = false              # Flip to true once santuario-core is built
+enabled                  = true              # Flip to true once santuario-core is built
 isolation_mode           = "seccomp"          # seccomp (v0.1) | gvisor (v0.5) | firecracker (v1.0)
 kernel_filter            = "seccomp-bpf"
 ipc_transport            = "grpc_uds"         # gRPC over Unix Domain Sockets, encrypted
