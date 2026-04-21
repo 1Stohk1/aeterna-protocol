@@ -81,7 +81,9 @@ def validate_block_by_reexecution(
             observed_scientific_hash=str(reply.get("scientific_hash", "")),
         )
 
-    observed_hash = str(reply.get("scientific_hash", ""))
+    observed_metrics = reply.get("metrics", {})
+    observed_hash = canonical_json_hash(observed_metrics).hex()
+    
     if observed_hash == expected_hash:
         return PoCResult(
             verdict=VALIDATED,

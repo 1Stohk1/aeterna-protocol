@@ -428,9 +428,10 @@ class Sentinel:
             "julia_version": result.get("julia_version"),
             "package_manifest_hash": self._package_manifest_hash,
         }
+        metrics = result.get("metrics", {})
         results_block = {
-            "metrics": result.get("metrics", {}),
-            "scientific_hash": result.get("scientific_hash"),
+            "metrics": metrics,
+            "scientific_hash": _canonical_sha256(metrics),
         }
         # Engine-reported timings are informational and intentionally EXCLUDED
         # from payload_hash — wall-clock ms varies across hardware and would
