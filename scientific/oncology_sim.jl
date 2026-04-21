@@ -128,10 +128,10 @@ function simula_crescita_tumorale(
     return Dict{String, Any}(
         "model"         => "gompertz_sde",
         "N0"            => N0,
-        "N_final"       => series[end],
-        "N_mean"        => mean(series),
-        "N_max"         => maximum(series),
-        "doubling_days" => _doubling_time(series, dt),
+        "N_final"       => round(series[end], digits=4),
+        "N_mean"        => round(mean(series), digits=4),
+        "N_max"         => round(maximum(series), digits=4),
+        "doubling_days" => round(_doubling_time(series, dt), digits=4),
         "days"          => days,
         "dt"            => dt,
         "steps"         => steps,
@@ -170,15 +170,15 @@ function simula_terapia_oncologica(
     return Dict{String, Any}(
         "model"                => "gompertz_therapy_sde",
         "N0"                   => N0,
-        "N_final"              => series[end],
-        "N_mean"               => mean(series),
-        "N_min"                => minimum(series),
+        "N_final"              => round(series[end], digits=4),
+        "N_mean"               => round(mean(series), digits=4),
+        "N_min"                => round(minimum(series), digits=4),
         "efficacia_farmaco"    => efficacia_farmaco,
         "giorno_inizio"        => giorno_inizio,
         "drug_halflife_days"   => drug_halflife_days,
         "days"                 => days,
         "dt"                   => dt,
-        "response_ratio"       => series[end] / N0,
+        "response_ratio"       => round(series[end] / N0, digits=4),
     )
 end
 
