@@ -21,6 +21,14 @@ from collections import deque
 from hashlib import sha256
 from typing import Callable, Iterable
 
+from core.nat_udp import (
+    RendezvousHint,
+    build_register_packet,
+    extract_rendezvous_peers,
+    is_rendezvous_peers_packet,
+)
+from core.peer_table import PeerTable
+
 LOG = logging.getLogger("aeterna.gossip")
 
 
@@ -57,6 +65,7 @@ class AeternaGossipNet:
         fanout: int = 4,
         ttl: int = 7,
         seen_cache_size: int = 10_000,
+        rendezvous_hints: Iterable[RendezvousHint] = (),
         on_message: Callable[[dict], None] | None = None,
     ) -> None:
         self.guardian_id = guardian_id
@@ -66,13 +75,20 @@ class AeternaGossipNet:
         self.default_ttl = ttl
         self.on_message = on_message
 
-        self.known_peers: list[tuple[str, int]] = list(bootstrap_peers)
+        self.peer_table = PeerTable(max_age_seconds=120)
+        for peer_host, peer_port in bootstrap_peers:
+            self.peer_table.add_or_update(peer_host, peer_port)
+        self.rendezvous_hints = list(rendezvous_hints)
+        self._rendezvous_targets = {(hint.host, hint.port) for hint in self.rendezvous_hints}
+
         self._seen: deque[str] = deque(maxlen=seen_cache_size)
         self._seen_set: set[str] = set()
+        self._last_rendezvous_register_ts = 0.0
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-        self._sock.bind((bind_host, port))
+        self._sock.bind((bind_host, self.port))
+        self.port = int(self._sock.getsockname()[1])
 
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
@@ -88,6 +104,7 @@ class AeternaGossipNet:
         )
         self._thread.start()
         LOG.info("gossip listening on %s:%d", self.bind_host, self.port)
+        self._maybe_register_rendezvous(force=True)
 
     def stop(self) -> None:
         self._stop.set()
@@ -95,6 +112,8 @@ class AeternaGossipNet:
             self._sock.close()
         except OSError:
             pass
+        if self._thread is not None and self._thread.is_alive():
+            self._thread.join(timeout=1.0)
 
     # ------------------------------------------------------------------
     # Public API
@@ -111,14 +130,13 @@ class AeternaGossipNet:
         mid = sha256(raw).hexdigest()
         envelope["mid"] = mid
         self._remember(mid)
+        self._maybe_register_rendezvous()
         self._relay(envelope)
         return mid
 
     def add_peer(self, host: str, port: int) -> None:
-        peer = (host, port)
-        if peer not in self.known_peers and peer != (self.bind_host, self.port):
-            self.known_peers.append(peer)
-            LOG.debug("peer added %s:%d", host, port)
+        if (host, port) != (self.bind_host, self.port):
+            self.peer_table.add_or_update(host, port)
 
     # ------------------------------------------------------------------
     # Internals
@@ -134,18 +152,38 @@ class AeternaGossipNet:
         return True
 
     def _relay(self, envelope: dict) -> None:
-        if envelope["ttl"] <= 0 or not self.known_peers:
+        if self._stop.is_set():
+            return
+        active_peers = self.peer_table.get_active_peers()
+        if envelope["ttl"] <= 0:
             return
         envelope["ttl"] -= 1
         payload = json.dumps(envelope, sort_keys=True).encode("utf-8")
-        targets = random.sample(
-            self.known_peers, min(self.fanout, len(self.known_peers))
-        )
+        targets = set(random.sample(active_peers, min(self.fanout, len(active_peers))))
+        targets.update(self._rendezvous_targets)
+        if not targets:
+            return
         for host, port in targets:
             try:
                 self._sock.sendto(payload, (host, port))
             except OSError as exc:
+                if self._stop.is_set():
+                    return
                 LOG.warning("relay to %s:%d failed: %s", host, port, exc)
+
+    def _maybe_register_rendezvous(self, *, force: bool = False) -> None:
+        if not self.rendezvous_hints:
+            return
+        now = time.time()
+        if not force and now - self._last_rendezvous_register_ts < 30.0:
+            return
+        packet = build_register_packet(self.guardian_id, self.port)
+        for hint in self.rendezvous_hints:
+            try:
+                self._sock.sendto(packet, (hint.host, hint.port))
+            except OSError as exc:
+                LOG.warning("rendezvous register to %s:%d failed: %s", hint.host, hint.port, exc)
+        self._last_rendezvous_register_ts = now
 
     def _listen_loop(self) -> None:
         while not self._stop.is_set():
@@ -160,15 +198,25 @@ class AeternaGossipNet:
                 LOG.warning("dropped malformed datagram from %s", addr)
                 continue
 
+            if is_rendezvous_peers_packet(envelope):
+                for host, port, guardian_id in extract_rendezvous_peers(envelope, self.guardian_id):
+                    self.peer_table.add_or_update(host, port, guardian_id)
+                continue
+
             if not self._remember(mid):
                 continue  # duplicate — already relayed
 
-            # Opportunistic peer discovery.
-            self.add_peer(addr[0], self.port)
+            # Opportunistic peer discovery. With UDP, the source port is the
+            # peer's reachable gossip port when it sends from its bound socket.
+            if addr not in self._rendezvous_targets:
+                self.add_peer(addr[0], addr[1])
 
             if self.on_message is not None:
                 try:
-                    self.on_message(envelope.get("body", {}))
+                    body = envelope.get("body", {})
+                    if isinstance(body, dict):
+                        body["__peer_addr__"] = addr
+                    self.on_message(body)
                 except Exception:  # noqa: BLE001  — gossip must not die
                     LOG.exception("on_message callback raised")
 

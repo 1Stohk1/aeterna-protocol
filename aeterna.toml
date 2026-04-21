@@ -69,6 +69,9 @@ peer_discovery           = "bootstrap_list"   # bootstrap_list | dht (future)
 bootstrap_peers          = [
     # "udp://<peer-ip>:4444",
 ]
+rendezvous_hints         = [
+    # "udp://<vps-ip>:4450",
+]
 fanout                   = 4                  # Peers a message is relayed to
 ttl                      = 7                  # Max gossip hops
 
@@ -118,6 +121,7 @@ omega_sybil              = 0.15
 omega_useful_work        = 0.40
 omega_cognition          = 0.30
 omega_integrity          = 0.15
+poc_sample_rate_pct      = 100                # v0.1 naive PoC demo validates every peer block
 slash_lambda             = 0.25               # λ in TS_new = TS_current · (1 − λ·δ)
 
 [bitcoin_anchor]

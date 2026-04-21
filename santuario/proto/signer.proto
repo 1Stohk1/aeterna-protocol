@@ -1,0 +1,32 @@
+syntax = "proto3";
+package santuario.signer.v1;
+
+service Signer {
+    rpc Sign (SignRequest) returns (SignResponse);
+    rpc Verify (VerifyRequest) returns (VerifyResponse);
+    rpc GetPublicKey (GetPublicKeyRequest) returns (GetPublicKeyResponse);
+}
+
+message SignRequest {
+    bytes payload_hash = 1;
+}
+
+message SignResponse {
+    bytes signature = 1;
+}
+
+message VerifyRequest {
+    bytes payload_hash = 1;
+    bytes signature = 2;
+    bytes public_key = 3;
+}
+
+message VerifyResponse {
+    bool valid = 1;
+}
+
+message GetPublicKeyRequest {}
+
+message GetPublicKeyResponse {
+    bytes public_key = 1;
+}

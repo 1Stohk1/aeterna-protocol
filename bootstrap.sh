@@ -3,19 +3,19 @@
 #  AETERNA Protocol — Genesis Boot v0.0.1
 #  Script: bootstrap.sh
 #
-#  Starts the two cooperating processes that constitute a v0.0.1 Guardian node:
+#  Starts the three cooperating processes that constitute a v0.1.0 Guardian node:
+#    0. Rust Santuario signer     (santuario/signer - gRPC signer)
 #
 #    1. Julia scientific engine   (scientific/zmq_server.jl — ZMQ REP on :5555)
 #    2. Python Sentinel           (core/sentinel.py — ZMQ REQ + UDP gossip :4444)
 #
 #  Out of scope for v0.0.1 (per roadmap in README.md):
-#    - Rust Santuario gRPC server        → v0.1.0
 #    - Streamlit "War Room" dashboard    → v0.2.0
 #    - Telegram bot + encrypted audit    → v0.1.0 alongside Santuario
 #    - Key rotation / Ratchet            → v0.5.0
 #
-#  This script intentionally does NOT start any of the above. v0.0.1 proves the
-#  Sentinel↔Julia loop on Missione Alpha. Everything else is a later release.
+#  v0.1.0 proves the signed Sentinel/Santuario/Julia loop on Missione Alpha.
+#  Hardening and operator dashboards remain later releases.
 #
 #  Usage:
 #      ./bootstrap.sh                   start the node
@@ -32,6 +32,7 @@ LOG_DIR="$HERE/logs"
 mkdir -p "$LOG_DIR"
 JULIA_LOG="$LOG_DIR/julia.log"
 SENTINEL_LOG="$LOG_DIR/sentinel.log"
+SANTUARIO_LOG="$LOG_DIR/santuario.log"
 
 # ---- colors (TTY only) ------------------------------------------------------
 if [[ -t 1 ]]; then
@@ -77,6 +78,7 @@ check_files() {
   [[ -f core/sentinel.py ]]            || die "core/sentinel.py missing"
   [[ -f scientific/zmq_server.jl ]]    || die "scientific/zmq_server.jl missing"
   [[ -f scientific/Project.toml ]]     || die "scientific/Project.toml missing"
+  [[ -d santuario ]]                   || die "santuario workspace missing"
 }
 
 check_python() {
@@ -103,14 +105,31 @@ if [[ $install_deps -eq 1 ]]; then
   julia --project=scientific -e 'using Pkg; Pkg.instantiate(); Pkg.precompile()'
 fi
 
+# Santuario runtime paths. Operators can override both before invoking the
+# script; defaults avoid privileged /run writes on regular user sessions.
+export SANTUARIO_KEYS_DIR="${SANTUARIO_KEYS_DIR:-$HERE/santuario/keys}"
+if [[ -z "${SANTUARIO_SOCKET:-}" ]]; then
+  if [[ -n "${XDG_RUNTIME_DIR:-}" ]]; then
+    export SANTUARIO_SOCKET="$XDG_RUNTIME_DIR/aeterna/santuario.sock"
+  else
+    export SANTUARIO_SOCKET="/tmp/aeterna-${UID:-user}/santuario.sock"
+  fi
+fi
+
 # ---- child-process management ----------------------------------------------
 JULIA_PID=""
+SANTUARIO_PID=""
 cleanup() {
   local code=$?
   if [[ -n "$JULIA_PID" ]] && kill -0 "$JULIA_PID" 2>/dev/null; then
     info "stopping julia engine (pid $JULIA_PID)"
     kill "$JULIA_PID" 2>/dev/null || true
     wait "$JULIA_PID" 2>/dev/null || true
+  fi
+  if [[ -n "$SANTUARIO_PID" ]] && kill -0 "$SANTUARIO_PID" 2>/dev/null; then
+    info "stopping santuario signer (pid $SANTUARIO_PID)"
+    kill "$SANTUARIO_PID" 2>/dev/null || true
+    wait "$SANTUARIO_PID" 2>/dev/null || true
   fi
   info "shutdown complete (exit $code)"
   exit "$code"
@@ -120,6 +139,7 @@ trap cleanup EXIT INT TERM
 # ---- wait-for-port helper ---------------------------------------------------
 wait_for_port() {
   local port="$1" timeout="$2"
+  local child_pid="${3:-$JULIA_PID}"
   local deadline=$(( SECONDS + timeout ))
   while (( SECONDS < deadline )); do
     if command -v ss >/dev/null 2>&1; then
@@ -133,7 +153,18 @@ wait_for_port() {
       sleep 3; return 0
     fi
     # Bail out if the child exited early.
-    kill -0 "$JULIA_PID" 2>/dev/null || return 1
+    [[ -z "$child_pid" ]] || kill -0 "$child_pid" 2>/dev/null || return 1
+    sleep 0.5
+  done
+  return 1
+}
+
+wait_for_socket() {
+  local path="$1" timeout="$2" child_pid="$3"
+  local deadline=$(( SECONDS + timeout ))
+  while (( SECONDS < deadline )); do
+    [[ -S "$path" ]] && return 0
+    kill -0 "$child_pid" 2>/dev/null || return 1
     sleep 0.5
   done
   return 1
@@ -150,6 +181,35 @@ info "launching julia scientific engine → $JULIA_LOG"
 julia --project=scientific scientific/zmq_server.jl >"$JULIA_LOG" 2>&1 &
 JULIA_PID=$!
 info "  julia pid=$JULIA_PID"
+
+info "launching santuario signer (Dilithium-5) → $SANTUARIO_LOG"
+# Attempt to run it via cargo. In a production environment without cargo, this would just be `./santuario-signer`.
+if command -v cargo >/dev/null 2>&1; then
+  (cd santuario/signer && cargo run --bin santuario-signer > "$SANTUARIO_LOG" 2>&1) &
+  SANTUARIO_PID=$!
+  info "  santuario pid=$SANTUARIO_PID"
+else
+  warn "cargo not found, skipping Santuario signer startup (Python sentinel may fail if it cannot connect to gRPC)"
+fi
+
+if [[ -n "$SANTUARIO_PID" ]]; then
+  if [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]]; then
+    info "waiting for Santuario TCP :${SANTUARIO_PORT:-50051} (timeout 60s)..."
+    if ! wait_for_port "${SANTUARIO_PORT:-50051}" 60 "$SANTUARIO_PID"; then
+      warn "santuario did not bind within 60s - last 40 lines of its log:"
+      tail -n 40 "$SANTUARIO_LOG" || true
+      die "aborting"
+    fi
+  else
+    info "waiting for Santuario UDS $SANTUARIO_SOCKET (timeout 60s)..."
+    if ! wait_for_socket "$SANTUARIO_SOCKET" 60 "$SANTUARIO_PID"; then
+      warn "santuario did not bind within 60s - last 40 lines of its log:"
+      tail -n 40 "$SANTUARIO_LOG" || true
+      die "aborting"
+    fi
+  fi
+  info "santuario signer ready"
+fi
 
 info "waiting for ZMQ REP to bind on :5555 (timeout 60s)…"
 if ! wait_for_port 5555 60; then

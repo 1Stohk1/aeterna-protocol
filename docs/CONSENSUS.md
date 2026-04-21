@@ -127,5 +127,26 @@ secure chain in existence.
 
 ---
 
+## v0.1.0 naive PoC algorithm
+
+Until ZK circuits ship, Level 2 is implemented as deterministic replay:
+
+1. A receiving Sentinel first verifies the AGP block signature and recomputes
+   `security.payload_hash` from canonical `{header,payload,reproducibility,results}`.
+2. The RANDAO-lite selector computes
+   `sha256(block_payload_hash || ":" || validator_guardian_id) % 100` and
+   validates the block when the value is below `poc_sample_rate_pct`.
+3. The validator sends Julia the original `payload.tipo_analisi`,
+   `payload.parametri`, and `reproducibility.seed_rng`.
+4. Julia re-executes the task deterministically and returns a fresh
+   `scientific_hash`.
+5. If the fresh hash equals `results.scientific_hash`, the validator gossips a
+   signed `poc_verdict` with `VALIDATED`; otherwise it gossips `REJECTED`.
+6. Trust bookkeeping applies `+1` for `VALIDATED` and `-1` for `REJECTED` to
+   the producer's local Level-2 score.
+
+For the v0.1.0 demo, `poc_sample_rate_pct = 100` so every received peer block
+is replayed. Operators can lower it after cross-host throughput is measured.
+
 *See also:* [`docs/AGP-v1.md`](./AGP-v1.md) for the payload format that
 traverses this pipeline.

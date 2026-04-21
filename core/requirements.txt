@@ -4,6 +4,8 @@
 # mock a message bus in tests, use core.testing.MockBroker (pure memory).
 
 pyzmq==26.0.3           # ZMQ bridge to Julia scientific engine
+grpcio==1.80.0          # Python bridge to the Rust Santuario signer
+protobuf==6.31.1        # Runtime for generated Santuario gRPC stubs
 tomli==2.0.1            # TOML parser for aeterna.toml (Python < 3.11 fallback)
 pydantic==2.7.1         # AGP-v1 payload validation
 cryptography==42.0.7    # SHA3, AES-GCM, X25519 fallback until PQ primitives wired

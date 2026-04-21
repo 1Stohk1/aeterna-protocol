@@ -1,0 +1,20 @@
+[package]
+name = "santuario-signer"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+tonic = "0.10"
+prost = "0.12"
+tokio = { version = "1.32", features = ["macros", "rt-multi-thread", "net", "fs"] }
+tokio-stream = { version = "0.1", features = ["net"] }
+pqcrypto-dilithium = "0.5"
+pqcrypto-traits = "0.3"
+hex = "0.4"
+log = "0.4"
+env_logger = "0.10"
+dirs = "5.0"
+
+[build-dependencies]
+tonic-build = "0.10"
+protoc-bin-vendored = "3"

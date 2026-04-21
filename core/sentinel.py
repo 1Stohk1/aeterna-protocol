@@ -25,6 +25,7 @@ Run with::
 from __future__ import annotations
 
 import argparse
+import hmac
 import hashlib
 import json
 import logging
@@ -46,6 +47,16 @@ except ModuleNotFoundError:  # pragma: no cover
 import zmq
 
 from core.gossip import AeternaGossipNet
+from core.nat_udp import RendezvousHint, parse_rendezvous_hints
+from core.poc import (
+    build_poc_verdict,
+    should_validate_block,
+    validate_block_by_reexecution,
+    verify_poc_verdict,
+)
+from core.santuario_client import SantuarioClient
+from core.handshake import build_peer_announce, verify_peer_announce
+from core.trust_score import TrustScoreBook
 
 LOG = logging.getLogger("aeterna.sentinel")
 
@@ -68,20 +79,38 @@ class SentinelConfig:
     gossip_fanout: int
     gossip_ttl: int
     bootstrap_peers: list[tuple[str, int]]
+    rendezvous_hints: list[RendezvousHint]
     pow_difficulty: int
     default_task: str
     agp_protocol_version: str
     freeze_julia_version: str
     accept_agpl_license: bool
     accept_prometeo_clause: bool
+    poc_sample_rate_pct: int
     raw: dict[str, Any] = field(repr=False, default_factory=dict)
 
     @classmethod
     def from_toml(cls, path: Path) -> "SentinelConfig":
         raw = tomllib.loads(path.read_text(encoding="utf-8"))
+        # Merge local overrides if present
+        local_path = path.with_name("aeterna.local.toml")
+        if local_path.exists():
+            local_raw = tomllib.loads(local_path.read_text(encoding="utf-8"))
+            # Deep merge simple dicts
+            def _merge(d1, d2):
+                for k, v in d2.items():
+                    if isinstance(v, dict) and k in d1 and isinstance(d1[k], dict):
+                        _merge(d1[k], v)
+                    else:
+                        d1[k] = v
+            _merge(raw, local_raw)
+            LOG.info(f"Loaded local overrides from {local_path.name}")
         bootstrap = [
             _parse_peer(p) for p in raw.get("gossip", {}).get("bootstrap_peers", [])
         ]
+        rendezvous_hints = parse_rendezvous_hints(
+            raw.get("gossip", {}).get("rendezvous_hints", [])
+        )
         ethics = raw.get("ethics", {})
         return cls(
             guardian_id=raw["identity"]["guardian_id"],
@@ -94,12 +123,14 @@ class SentinelConfig:
             gossip_fanout=int(raw["gossip"]["fanout"]),
             gossip_ttl=int(raw["gossip"]["ttl"]),
             bootstrap_peers=bootstrap,
+            rendezvous_hints=rendezvous_hints,
             pow_difficulty=int(raw["sentinel"]["pow_difficulty"]),
             default_task=raw["mission"]["default_task"],
             agp_protocol_version=raw["agp"]["protocol_version"],
             freeze_julia_version=raw["agp"]["freeze_julia_version"],
             accept_agpl_license=bool(ethics.get("accept_agpl_license", False)),
             accept_prometeo_clause=bool(ethics.get("accept_prometeo_clause", False)),
+            poc_sample_rate_pct=int(raw.get("consensus", {}).get("poc_sample_rate_pct", 100)),
             raw=raw,
         )
 
@@ -125,9 +156,15 @@ class Sentinel:
         self._ctx = zmq.Context.instance()
         self._zmq: zmq.Socket | None = None
         self._gossip: AeternaGossipNet | None = None
+        self._santuario: SantuarioClient | None = None
+        self._public_key: bytes | None = None
         self._running = False
+        self._last_announce_ts: float = 0.0
 
         self._task_queue: list[dict[str, Any]] = []
+        self._poc_queue: list[dict[str, Any]] = []
+        self._poc_seen_blocks: set[str] = set()
+        self._trust_scores = TrustScoreBook()
         self._package_manifest_hash = self._hash_python_manifest()
 
     # ------------------------------------------------------------------
@@ -142,6 +179,10 @@ class Sentinel:
         self._check_gpu()
         self._sign_manifesto()
 
+        self._santuario = SantuarioClient()
+        self._public_key = self._santuario.get_public_key()
+        LOG.info(f"Santuario signer connected. Pubkey len: {len(self._public_key)} bytes")
+
         self._zmq = self._ctx.socket(zmq.REQ)
         self._zmq.setsockopt(zmq.SNDTIMEO, self.cfg.zmq_send_timeout_ms)
         self._zmq.setsockopt(zmq.RCVTIMEO, self.cfg.zmq_recv_timeout_ms)
@@ -154,6 +195,7 @@ class Sentinel:
             bootstrap_peers=self.cfg.bootstrap_peers,
             fanout=self.cfg.gossip_fanout,
             ttl=self.cfg.gossip_ttl,
+            rendezvous_hints=self.cfg.rendezvous_hints,
             on_message=self._on_gossip,
         )
         self._gossip.start()
@@ -225,6 +267,14 @@ class Sentinel:
         self._running = True
         LOG.info("entering lifecycle loop — Ctrl-C to stop")
         while self._running:
+            # Broadcast peer_announce periodically
+            now = time.time()
+            if now - self._last_announce_ts > 30.0:
+                self._broadcast_announce()
+                self._last_announce_ts = now
+
+            self._process_next_poc_validation()
+
             task = self.harvest_task()
             if task is None:
                 time.sleep(1.0)
@@ -241,9 +291,31 @@ class Sentinel:
             payload["security"]["pow_nonce"] = nonce
             payload["security"]["pow_hash"] = block_hash
 
+            self._sign_block(payload)
+
             assert self._gossip is not None
             mid = self._gossip.gossip({"kind": "agp_block", "payload": payload})
             LOG.info("block broadcast mid=%s pow=%s…", mid[:12], block_hash[:12])
+
+    def _sign_block(self, payload: dict[str, Any]) -> None:
+        assert self._santuario is not None
+        assert self._public_key is not None
+
+        payload_hash_hex = payload["security"]["payload_hash"]
+        signature = self._santuario.sign(bytes.fromhex(payload_hash_hex))
+        payload["security"]["signature"] = signature.hex()
+        payload["security"]["public_key"] = self._public_key.hex()
+
+    def _broadcast_announce(self) -> None:
+        if not self._santuario or not self._gossip:
+            return
+        announce_msg = build_peer_announce(
+            guardian_id=self.cfg.guardian_id,
+            manifesto_path=str(self.manifesto_path),
+            santuario_client=self._santuario
+        )
+        self._gossip.gossip(announce_msg)
+        LOG.debug("broadcasted peer_announce")
 
     def harvest_task(self) -> dict[str, Any] | None:
         """Pull the next pending task. In v0.0.1, gossip is still bootstrapping,
@@ -280,6 +352,50 @@ class Sentinel:
         if reply.get("status") != "ok":
             raise RuntimeError(f"Julia engine error: {reply.get('error')}")
         return reply
+
+    def _execute_poc_request(self, request: dict[str, Any]) -> dict[str, Any]:
+        assert self._zmq is not None
+        LOG.info("PoC replay -> Julia: %s (task=%s seed=%s)",
+                 request["tipo_analisi"], request["id_task"][:16],
+                 request["reproducibility"].get("seed_rng"))
+        self._zmq.send_json(request)
+        return self._zmq.recv_json()  # type: ignore[return-value]
+
+    def _process_next_poc_validation(self) -> None:
+        if not self._poc_queue or not self._santuario or not self._gossip:
+            return
+
+        payload = self._poc_queue.pop(0)
+        payload_hash = payload.get("security", {}).get("payload_hash", "")
+        if not payload_hash or payload_hash in self._poc_seen_blocks:
+            return
+        self._poc_seen_blocks.add(payload_hash)
+
+        producer_id = payload.get("header", {}).get("node_id", "unknown")
+        if producer_id == self.cfg.guardian_id:
+            return
+        if not should_validate_block(payload, self.cfg.guardian_id, self.cfg.poc_sample_rate_pct):
+            LOG.debug("PoC selector skipped block %s from %s", payload_hash[:12], producer_id)
+            return
+
+        result = validate_block_by_reexecution(payload, self._execute_poc_request)
+        verdict_message = build_poc_verdict(
+            validator_id=self.cfg.guardian_id,
+            block_payload=payload,
+            result=result,
+            santuario_client=self._santuario,
+        )
+        delta = self._trust_scores.apply_poc_verdict(producer_id, result.verdict)
+        self._gossip.gossip(verdict_message)
+        LOG.info(
+            "PoC %s for %s block=%s reason=%s trust_delta=%+d local_trust=%d",
+            result.verdict,
+            producer_id,
+            payload_hash[:12],
+            result.reason,
+            delta,
+            self._trust_scores.get(producer_id),
+        )
 
     # ------------------------------------------------------------------
     # AGP-v1 payload construction
@@ -349,12 +465,97 @@ class Sentinel:
     # Gossip inbound
     # ------------------------------------------------------------------
     def _on_gossip(self, message: dict[str, Any]) -> None:
+        peer_addr = message.pop("__peer_addr__", None)
         kind = message.get("kind")
         if kind == "task_offer":
             self._task_queue.append(message["task"])
+        elif kind == "peer_announce":
+            assert self._santuario is not None
+            valid, reason = verify_peer_announce(message, self._santuario)
+            if valid:
+                payload = message.get("payload", {})
+                guardian_id = payload.get("guardian_id", "unknown")
+                if peer_addr and self._gossip:
+                    self._gossip.peer_table.add_or_update(peer_addr[0], peer_addr[1], guardian_id)
+                LOG.info(f"peer_announce received and verified from {guardian_id}")
+            else:
+                LOG.warning("invalid peer_announce dropped: %s", reason)
+
         elif kind == "agp_block":
-            LOG.debug("observed peer block: %s",
-                      message["payload"]["header"].get("node_id"))
+            payload = message.get("payload", {})
+            valid, reason = self._verify_peer_block(payload)
+            if not valid:
+                LOG.warning(
+                    "dropping block from %s: %s",
+                    payload.get("header", {}).get("node_id"),
+                    reason,
+                )
+                return
+
+            LOG.debug("observed peer block: %s (signature verified)",
+                      payload["header"].get("node_id"))
+            self._poc_queue.append(payload)
+
+        elif kind == "poc_verdict":
+            assert self._santuario is not None
+            valid, reason = verify_poc_verdict(message, self._santuario)
+            if not valid:
+                LOG.warning("invalid poc_verdict dropped: %s", reason)
+                return
+
+            verdict_payload = message.get("payload", {})
+            producer_id = verdict_payload.get("producer_id", "unknown")
+            verdict = verdict_payload.get("verdict", "")
+            delta = self._trust_scores.apply_poc_verdict(producer_id, verdict)
+            LOG.info(
+                "PoC verdict received: %s validated block=%s from=%s trust_delta=%+d trust=%d",
+                verdict_payload.get("validator_id", "unknown"),
+                verdict_payload.get("block_payload_hash", "")[:12],
+                producer_id,
+                delta,
+                self._trust_scores.get(producer_id),
+            )
+
+    def _verify_peer_block(self, payload: dict[str, Any]) -> tuple[bool, str]:
+        assert self._santuario is not None
+
+        try:
+            security = payload["security"]
+            claimed_hash_hex = security["payload_hash"]
+            expected_hash_hex = _canonical_sha256({
+                "header": payload["header"],
+                "payload": payload["payload"],
+                "reproducibility": payload["reproducibility"],
+                "results": payload["results"],
+            })
+            if not hmac.compare_digest(claimed_hash_hex, expected_hash_hex):
+                return False, "payload_hash mismatch"
+
+            pow_nonce = security.get("pow_nonce")
+            pow_hash = security.get("pow_hash")
+            if pow_nonce is not None and pow_hash:
+                expected_pow = hashlib.sha256(
+                    f"{claimed_hash_hex}:{int(pow_nonce)}".encode("utf-8")
+                ).hexdigest()
+                target_prefix = "0" * self.cfg.pow_difficulty
+                if not hmac.compare_digest(pow_hash, expected_pow):
+                    return False, "pow_hash mismatch"
+                if not pow_hash.startswith(target_prefix):
+                    return False, "pow difficulty not satisfied"
+
+            signature = bytes.fromhex(security.get("signature", ""))
+            public_key = bytes.fromhex(security.get("public_key", ""))
+            payload_hash = bytes.fromhex(claimed_hash_hex)
+        except (KeyError, TypeError, ValueError):
+            return False, "malformed AGP security fields"
+
+        if not signature or not public_key:
+            return False, "missing signature or public_key"
+
+        if not self._santuario.verify(payload_hash, signature, public_key):
+            return False, "invalid cryptographic signature"
+
+        return True, "ok"
 
     # ------------------------------------------------------------------
     # Misc
@@ -372,6 +573,8 @@ class Sentinel:
             self._gossip.stop()
         if self._zmq:
             self._zmq.close(linger=0)
+        if self._santuario:
+            self._santuario.close()
 
 
 def _canonical_sha256(obj: Any) -> str:

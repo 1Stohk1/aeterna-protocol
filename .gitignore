@@ -35,6 +35,7 @@ deps/build.log
 
 # --- Rust / Cargo (future santuario, chain) ---
 target/
+target-codex/
 **/*.rs.bk
 Cargo.lock
 
@@ -74,6 +75,7 @@ logs/
 aeterna.local.toml
 .env
 .env.local
+.uv-cache/
 
 # --- IPFS / storage caches ---
 .ipfs/

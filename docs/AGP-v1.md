@@ -48,6 +48,8 @@ task.
   "security": {
     "payload_hash": "sha256:...",
     "results_scientific_hash": "sha256:...",
+    "signature": "hex:dilithium5-signed-payload-hash",
+    "public_key": "hex:dilithium5-public-key",
     "consensus_status": "PENDING",
     "pow_nonce": 194583,
     "pow_hash": "0000..."
@@ -72,6 +74,8 @@ task.
 | `results.scientific_hash` | string | `sha256(json.dumps(metrics, sorted))`. |
 | `performance.execution_time_ms` | float | Engine wall-clock for the compute block, reported by Julia. **Informational** — deliberately NOT covered by `payload_hash` because wall-clock varies across hardware. Consumed by `PoUW / t_exec` in the Trust Score. |
 | `security.payload_hash` | string | `sha256(canonical_json({header,payload,reproducibility,results}))` — note `performance` is excluded. |
+| `security.signature` | string | Hex-encoded Dilithium-5 signed message over the 32-byte `payload_hash`. Receivers MUST verify it with `security.public_key` and MUST independently recompute `payload_hash` from the canonical payload before accepting the block. |
+| `security.public_key` | string | Hex-encoded Dilithium-5 public key for the signing Guardian. |
 | `security.pow_nonce` | int | Nonce that solves PoW difficulty. |
 | `security.pow_hash` | string | `sha256(f"{payload_hash}:{nonce}")`, leading zeros ≥ difficulty. |
 | `security.consensus_status` | enum | `PENDING` → `VALIDATED` → `FINALIZED` or `REJECTED`. |
