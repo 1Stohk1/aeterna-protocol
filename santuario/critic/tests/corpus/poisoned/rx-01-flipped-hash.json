@@ -1,0 +1,38 @@
+{
+  "header": {
+    "node_id": "Prometheus-0",
+    "protocol_version": "AGP-v1",
+    "timestamp": 1713542400
+  },
+  "payload": {
+    "id_task": "TASK-abcd1234",
+    "parametri": {
+      "K": 1000000000000,
+      "N0": 1000000,
+      "days": 30,
+      "rho": 0.05,
+      "sigma": 0.1
+    },
+    "tipo_analisi": "tumor_growth_gompertz"
+  },
+  "reproducibility": {
+    "julia_version": "1.10.2",
+    "package_manifest_hash": "sha256:manifest",
+    "seed_rng": 424242
+  },
+  "results": {
+    "metrics": {
+      "ok": 1
+    },
+    "scientific_hash": "sha256:abc123"
+  },
+  "security": {
+    "consensus_status": "PENDING",
+    "payload_hash": "sha256:0000000000000000000000000000000000000000000000000000000000000001",
+    "pow_hash": "0",
+    "pow_nonce": 0,
+    "public_key": "",
+    "results_scientific_hash": "sha256:abc123",
+    "signature": ""
+  }
+}

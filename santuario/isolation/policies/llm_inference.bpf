@@ -1,0 +1,91 @@
+# Seccomp allowlist — LLM inference child. Tighter than the Julia policy:
+# no sockets, no execve, no filesystem writes. Inference must be pure
+# stdio + memory.
+
+# ---- essential libc / runtime -----------------------------------------------
+read
+write
+readv
+writev
+pread64
+pwrite64
+close
+fstat
+newfstatat
+lstat
+stat
+statx
+lseek
+dup
+dup2
+dup3
+fcntl
+ioctl
+poll
+ppoll
+select
+pselect6
+epoll_create
+epoll_create1
+epoll_ctl
+epoll_wait
+epoll_pwait
+
+# ---- memory / GC -------------------------------------------------------------
+mmap
+munmap
+mremap
+mprotect
+madvise
+brk
+
+# ---- threading / futex -------------------------------------------------------
+futex
+get_robust_list
+set_robust_list
+clone
+clone3
+set_tid_address
+sched_yield
+sched_getaffinity
+prlimit64
+getrlimit
+
+# ---- signals / time ----------------------------------------------------------
+rt_sigaction
+rt_sigprocmask
+rt_sigreturn
+sigaltstack
+clock_gettime
+clock_getres
+clock_nanosleep
+gettimeofday
+nanosleep
+tgkill
+
+# ---- read-only filesystem ----------------------------------------------------
+openat
+open
+access
+faccessat
+faccessat2
+getcwd
+readlink
+readlinkat
+getdents
+getdents64
+
+# ---- identity ----------------------------------------------------------------
+getpid
+gettid
+getppid
+getuid
+geteuid
+getgid
+getegid
+uname
+arch_prctl
+
+# ---- exit --------------------------------------------------------------------
+exit
+exit_group

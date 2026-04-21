@@ -1,0 +1,38 @@
+{
+  "header": {
+    "node_id": "Guardian-0",
+    "protocol_version": "AGP-v1",
+    "timestamp": 1713542400
+  },
+  "payload": {
+    "id_task": "TASK-clean-30",
+    "parametri": {
+      "K": 1000000000000,
+      "N0": 7000000,
+      "days": 60,
+      "rho": 0.08,
+      "sigma": 0.11
+    },
+    "tipo_analisi": "tumor_growth_gompertz"
+  },
+  "reproducibility": {
+    "julia_version": "1.10.2",
+    "package_manifest_hash": "sha256:manifest",
+    "seed_rng": 424242
+  },
+  "results": {
+    "metrics": {
+      "ok": 1
+    },
+    "scientific_hash": "sha256:9fb83c27fe6c25932182ab43113acae69924fb09ec096a9d31b23d0b37a63a37"
+  },
+  "security": {
+    "consensus_status": "PENDING",
+    "payload_hash": "sha256:ce3c74d6f2d831b6161e080d54af7a11421b9df6195f92ff1e7cbb707cbe11f2",
+    "pow_hash": "0",
+    "pow_nonce": 0,
+    "public_key": "",
+    "results_scientific_hash": "sha256:9fb83c27fe6c25932182ab43113acae69924fb09ec096a9d31b23d0b37a63a37",
+    "signature": ""
+  }
+}

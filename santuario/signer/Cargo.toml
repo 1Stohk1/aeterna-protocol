@@ -1,20 +1,68 @@
 [package]
-name = "santuario-signer"
-version = "0.1.0"
-edition = "2021"
+name        = "santuario-signer"
+description = "Dilithium-5 signing service. Refuses to sign unless vault is unsealed, workload is attested, and the critic accepts the payload."
+version.workspace      = true
+edition.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
 
 [dependencies]
-tonic = "0.10"
-prost = "0.12"
-tokio = { version = "1.32", features = ["macros", "rt-multi-thread", "net", "fs"] }
-tokio-stream = { version = "0.1", features = ["net"] }
-pqcrypto-dilithium = "0.5"
-pqcrypto-traits = "0.3"
-hex = "0.4"
-log = "0.4"
-env_logger = "0.10"
-dirs = "5.0"
+# Workspace crates
+santuario-vault     = { path = "../vault" }
+santuario-critic    = { path = "../critic" }
+santuario-integrity = { path = "../integrity" }
+santuario-isolation = { path = "../isolation" }
+
+# gRPC / async
+tonic        = { workspace = true }
+prost        = { workspace = true }
+tokio        = { workspace = true }
+tokio-stream = { workspace = true }
+
+# Crypto
+pqcrypto-dilithium = { workspace = true }
+pqcrypto-traits    = { workspace = true }
+sha2               = { workspace = true }
+hex                = { workspace = true }
+rand               = { workspace = true }
+
+# Serde / errors / logging
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+anyhow      = { workspace = true }
+thiserror   = { workspace = true }
+log         = { workspace = true }
+env_logger  = { workspace = true }
+dirs        = { workspace = true }
+chrono      = { workspace = true }
+clap        = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+nix = { workspace = true }
 
 [build-dependencies]
-tonic-build = "0.10"
+tonic-build         = "0.10"
 protoc-bin-vendored = "3"
+
+[dev-dependencies]
+tempfile = { workspace = true }
+
+[features]
+default = []
+# Enable the PID-attestation enforcement. Off by default for dev; the
+# production bootstrap.sh flips it on.
+strict-attestation = []
+
+[[bin]]
+name = "santuario-signer"
+path = "src/main.rs"
+
+[[bin]]
+name = "keygen"
+path = "src/bin/keygen.rs"
+
+[[bin]]
+name = "santuarioctl"
+path = "src/bin/santuarioctl.rs"

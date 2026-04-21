@@ -126,7 +126,7 @@ aeterna-protocol/
 |---|---|
 | `v0.0.1` | Local Sentinel↔Julia loop on *Missione Alpha* (this release) |
 | `v0.1.0` | Rust Santuario with `llama.cpp` LLM subprocess + encrypted IPC |
-| `v0.2.0` | Multi-node UDP gossip + hybrid consensus validation |
+| `v0.2.0` | ✅ Multi-node UDP gossip + hybrid consensus validation (Custos) |
 | `v0.5.0` | CosmWasm smart contracts + IBC testnet + IPFS cold storage |
 | `v1.0.0` | Firecracker micro-VM isolation + Bitcoin `OP_RETURN` anchoring + public mainnet |
 

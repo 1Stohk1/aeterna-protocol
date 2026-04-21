@@ -1,0 +1,35 @@
+{
+  "header": {
+    "node_id": "Prometheus-0",
+    "protocol_version": "AGP-v1",
+    "timestamp": 1713542400
+  },
+  "payload": {
+    "id_task": "TASK-abcd1234",
+    "parametri": {
+      "sequence": "HPHP",
+      "steps": -1000
+    },
+    "tipo_analisi": "protein_folding_hp"
+  },
+  "reproducibility": {
+    "julia_version": "1.10.2",
+    "package_manifest_hash": "sha256:manifest",
+    "seed_rng": 424242
+  },
+  "results": {
+    "metrics": {
+      "ok": 1
+    },
+    "scientific_hash": "sha256:abc123"
+  },
+  "security": {
+    "consensus_status": "PENDING",
+    "payload_hash": "sha256:b64610a319034eaa51244734460f993c9119fa518c02c3d595ea5791cf2fd4e1",
+    "pow_hash": "0",
+    "pow_nonce": 0,
+    "public_key": "",
+    "results_scientific_hash": "sha256:abc123",
+    "signature": ""
+  }
+}

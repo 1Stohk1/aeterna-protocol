@@ -1,0 +1,30 @@
+[package]
+name        = "santuario-integrity"
+description = "α/β/γ threshold watchdog. Hourly SHA-256 sweep (α), CPU stress monitor (β), port-scan detector (γ). Emits integrity_alert gossip and self-suspends the signer."
+version.workspace      = true
+edition.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[dependencies]
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+sha2        = { workspace = true }
+hex         = { workspace = true }
+anyhow      = { workspace = true }
+thiserror   = { workspace = true }
+log         = { workspace = true }
+chrono      = { workspace = true }
+walkdir     = { workspace = true }
+toml        = { workspace = true }
+tokio       = { workspace = true }
+sysinfo     = { workspace = true }
+
+[lib]
+name = "santuario_integrity"
+path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = { workspace = true }

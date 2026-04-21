@@ -1,0 +1,26 @@
+[package]
+name        = "santuario-critic"
+description = "Deterministic pre-sign critic loop. Enforces the three Cognitive Trivium checks (reflexive, symbolic, axiomatic) over AGP-v1 payloads. Pure Rust, no LLM."
+version.workspace      = true
+edition.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[dependencies]
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+sha2        = { workspace = true }
+hex         = { workspace = true }
+anyhow      = { workspace = true }
+thiserror   = { workspace = true }
+log         = { workspace = true }
+chrono      = { workspace = true }
+
+[lib]
+name = "santuario_critic"
+path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = { workspace = true }

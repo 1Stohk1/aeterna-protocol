@@ -1,0 +1,36 @@
+[package]
+name        = "santuario-isolation"
+description = "Process isolation layer. Linux: launches workloads under a strict seccomp-bpf allowlist. Other OS: mock launcher that refuses to start workloads — nodes on non-Linux run only as osservatore."
+version.workspace      = true
+edition.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[dependencies]
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+anyhow      = { workspace = true }
+thiserror   = { workspace = true }
+log         = { workspace = true }
+sha2        = { workspace = true }
+hex         = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+nix      = { workspace = true }
+libc     = "0.2"
+# libseccomp Rust binding — depends on libseccomp-dev system package at build
+# time. Bootstrap script installs it on supported distros.
+libseccomp = { version = "0.3", optional = true }
+
+[features]
+default  = []
+seccomp  = ["dep:libseccomp"]
+
+[lib]
+name = "santuario_isolation"
+path = "src/lib.rs"
+
+[dev-dependencies]
+tempfile = { workspace = true }

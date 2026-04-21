@@ -182,6 +182,11 @@ julia --project=scientific scientific/zmq_server.jl >"$JULIA_LOG" 2>&1 &
 JULIA_PID=$!
 info "  julia pid=$JULIA_PID"
 
+# Force WSL to use TCP because of tonic/grpcio HTTP/2 UDS bugs
+if [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]] || [[ "$(uname -r)" =~ WSL ]]; then
+  export SANTUARIO_PORT="50051"
+fi
+
 info "launching santuario signer (Dilithium-5) → $SANTUARIO_LOG"
 # Attempt to run it via cargo. In a production environment without cargo, this would just be `./santuario-signer`.
 if command -v cargo >/dev/null 2>&1; then
@@ -193,9 +198,9 @@ else
 fi
 
 if [[ -n "$SANTUARIO_PID" ]]; then
-  if [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]]; then
-    info "waiting for Santuario TCP :${SANTUARIO_PORT:-50051} (timeout 60s)..."
-    if ! wait_for_port "${SANTUARIO_PORT:-50051}" 60 "$SANTUARIO_PID"; then
+  if [[ -n "${SANTUARIO_PORT:-}" ]]; then
+    info "waiting for Santuario TCP :$SANTUARIO_PORT (timeout 60s)..."
+    if ! wait_for_port "$SANTUARIO_PORT" 60 "$SANTUARIO_PID"; then
       warn "santuario did not bind within 60s - last 40 lines of its log:"
       tail -n 40 "$SANTUARIO_LOG" || true
       die "aborting"

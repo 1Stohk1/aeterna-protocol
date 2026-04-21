@@ -26,7 +26,13 @@ if _version_not_supported:
 
 
 class SignerStub(object):
-    """Missing associated documentation comment in .proto file."""
+    """v0.2.0 "Custos": the signer is no longer a bare Dilithium-5 oracle.
+    Every `Sign` carries an AGP-v1 block; the signer runs the critic's
+    three checks (reflexive, symbolic, axiomatic) and verifies the
+    producer PID's seccomp attestation before emitting a signature. A
+    suspended signer (α/β/γ threshold) rejects every Sign regardless.
+
+    """
 
     def __init__(self, channel):
         """Constructor.
@@ -49,25 +55,83 @@ class SignerStub(object):
                 request_serializer=signer__pb2.GetPublicKeyRequest.SerializeToString,
                 response_deserializer=signer__pb2.GetPublicKeyResponse.FromString,
                 _registered_method=True)
+        self.GetStatus = channel.unary_unary(
+                '/santuario.signer.v1.Signer/GetStatus',
+                request_serializer=signer__pb2.GetStatusRequest.SerializeToString,
+                response_deserializer=signer__pb2.GetStatusResponse.FromString,
+                _registered_method=True)
+        self.TriggerAudit = channel.unary_unary(
+                '/santuario.signer.v1.Signer/TriggerAudit',
+                request_serializer=signer__pb2.TriggerAuditRequest.SerializeToString,
+                response_deserializer=signer__pb2.TriggerAuditResponse.FromString,
+                _registered_method=True)
+        self.Resume = channel.unary_unary(
+                '/santuario.signer.v1.Signer/Resume',
+                request_serializer=signer__pb2.ResumeRequest.SerializeToString,
+                response_deserializer=signer__pb2.ResumeResponse.FromString,
+                _registered_method=True)
 
 
 class SignerServicer(object):
-    """Missing associated documentation comment in .proto file."""
+    """v0.2.0 "Custos": the signer is no longer a bare Dilithium-5 oracle.
+    Every `Sign` carries an AGP-v1 block; the signer runs the critic's
+    three checks (reflexive, symbolic, axiomatic) and verifies the
+    producer PID's seccomp attestation before emitting a signature. A
+    suspended signer (α/β/γ threshold) rejects every Sign regardless.
+
+    """
 
     def Sign(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """Sign an AGP-v1 block. The block is the canonical JSON bytes of
+        the full envelope (header, payload, reproducibility, results,
+        security). On success the server returns a Dilithium-5 detached
+        signature over SHA-256(payload || reproducibility || results).
+
+        Errors (Status codes):
+        FAILED_PRECONDITION   -> signer is suspended (see GetStatus)
+        PERMISSION_DENIED     -> PID attestation failed
+        INVALID_ARGUMENT      -> block parse / schema violation
+        ABORTED               -> reflexive / symbolic / axiomatic
+        violation (see Violation)
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def Verify(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """Verify a detached Dilithium-5 signature against a payload hash.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
     def GetPublicKey(self, request, context):
-        """Missing associated documentation comment in .proto file."""
+        """Fetch the public key used by this signer. Guardians publish this
+        on the gossip network as part of their identity block.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def GetStatus(self, request, context):
+        """Report the current operational status of the signer.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def TriggerAudit(self, request, context):
+        """Manually trigger the α integrity sweep now. Used by
+        `santuarioctl audit --now` for tests / drills.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
+    def Resume(self, request, context):
+        """Operator-signed resume: present a Dilithium-5 signature over the
+        outstanding challenge to clear a suspension.
+        """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
@@ -90,6 +154,21 @@ def add_SignerServicer_to_server(servicer, server):
                     request_deserializer=signer__pb2.GetPublicKeyRequest.FromString,
                     response_serializer=signer__pb2.GetPublicKeyResponse.SerializeToString,
             ),
+            'GetStatus': grpc.unary_unary_rpc_method_handler(
+                    servicer.GetStatus,
+                    request_deserializer=signer__pb2.GetStatusRequest.FromString,
+                    response_serializer=signer__pb2.GetStatusResponse.SerializeToString,
+            ),
+            'TriggerAudit': grpc.unary_unary_rpc_method_handler(
+                    servicer.TriggerAudit,
+                    request_deserializer=signer__pb2.TriggerAuditRequest.FromString,
+                    response_serializer=signer__pb2.TriggerAuditResponse.SerializeToString,
+            ),
+            'Resume': grpc.unary_unary_rpc_method_handler(
+                    servicer.Resume,
+                    request_deserializer=signer__pb2.ResumeRequest.FromString,
+                    response_serializer=signer__pb2.ResumeResponse.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'santuario.signer.v1.Signer', rpc_method_handlers)
@@ -99,7 +178,13 @@ def add_SignerServicer_to_server(servicer, server):
 
  # This class is part of an EXPERIMENTAL API.
 class Signer(object):
-    """Missing associated documentation comment in .proto file."""
+    """v0.2.0 "Custos": the signer is no longer a bare Dilithium-5 oracle.
+    Every `Sign` carries an AGP-v1 block; the signer runs the critic's
+    three checks (reflexive, symbolic, axiomatic) and verifies the
+    producer PID's seccomp attestation before emitting a signature. A
+    suspended signer (α/β/γ threshold) rejects every Sign regardless.
+
+    """
 
     @staticmethod
     def Sign(request,
@@ -172,6 +257,87 @@ class Signer(object):
             '/santuario.signer.v1.Signer/GetPublicKey',
             signer__pb2.GetPublicKeyRequest.SerializeToString,
             signer__pb2.GetPublicKeyResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def GetStatus(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/santuario.signer.v1.Signer/GetStatus',
+            signer__pb2.GetStatusRequest.SerializeToString,
+            signer__pb2.GetStatusResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def TriggerAudit(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/santuario.signer.v1.Signer/TriggerAudit',
+            signer__pb2.TriggerAuditRequest.SerializeToString,
+            signer__pb2.TriggerAuditResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def Resume(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/santuario.signer.v1.Signer/Resume',
+            signer__pb2.ResumeRequest.SerializeToString,
+            signer__pb2.ResumeResponse.FromString,
             options,
             channel_credentials,
             insecure,

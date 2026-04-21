@@ -1,5 +1,67 @@
 [workspace]
 members = [
-    "signer"
+    "signer",
+    "vault",
+    "isolation",
+    "critic",
+    "integrity",
 ]
 resolver = "2"
+
+# Shared dependencies across the Santuario workspace. Pin aggressively — the
+# Santuario sits in the signing path and unplanned upgrades are a supply-chain
+# risk. Every bump goes through the Terminale di Comando.
+[workspace.package]
+version      = "0.2.0"
+edition      = "2021"
+authors      = ["AETERNA Guardians"]
+license      = "AGPL-3.0-only WITH AETERNA-Prometheus-Clause"
+repository   = "https://github.com/aeterna-protocol/aeterna"
+rust-version = "1.75"
+
+[workspace.dependencies]
+# Crypto
+aes-gcm         = { version = "0.10", features = ["std", "aes"] }
+sha2            = "0.10"
+hkdf            = "0.12"
+rand            = "0.8"
+rand_core       = { version = "0.6", features = ["std"] }
+zeroize         = { version = "1.7", features = ["zeroize_derive"] }
+pqcrypto-dilithium = "0.5"
+pqcrypto-traits    = "0.3"
+
+# Serialization
+serde        = { version = "1", features = ["derive"] }
+serde_json   = "1"
+serde_bytes  = "0.11"
+hex          = { version = "0.4", features = ["serde"] }
+base64       = "0.22"
+toml         = "0.8"
+
+# Errors & logging
+anyhow       = "1"
+thiserror    = "1"
+log          = "0.4"
+env_logger   = "0.10"
+tracing      = "0.1"
+
+# Time & async
+chrono       = { version = "0.4", features = ["serde", "clock"] }
+tokio        = { version = "1.32", features = ["full"] }
+
+# CLI
+clap         = { version = "4", features = ["derive"] }
+
+# Filesystem
+dirs         = "5"
+tempfile     = "3"
+walkdir      = "2"
+
+# gRPC
+tonic        = "0.10"
+prost        = "0.12"
+tokio-stream = { version = "0.1", features = ["net"] }
+
+# Process/system
+nix          = { version = "0.27", features = ["process", "signal"] }
+sysinfo      = "0.30"

@@ -42,9 +42,12 @@ class SantuarioClient:
 
     @staticmethod
     def _default_target() -> str:
-        if sys.platform == "win32":
-            port = os.environ.get("SANTUARIO_PORT", "50051")
+        if "SANTUARIO_PORT" in os.environ:
+            port = os.environ["SANTUARIO_PORT"]
             return f"127.0.0.1:{port}"
+        
+        if sys.platform == "win32":
+            return "127.0.0.1:50051"
 
         socket_path = os.environ.get("SANTUARIO_SOCKET", "/run/aeterna/santuario.sock")
         return f"unix://{socket_path}"

@@ -1,0 +1,35 @@
+{
+  "header": {
+    "node_id": "Guardian-0",
+    "protocol_version": "AGP-v1",
+    "timestamp": 1713542400
+  },
+  "payload": {
+    "id_task": "TASK-clean-20",
+    "parametri": {
+      "obs": "AAGTACGTACGTACGTACGTACGTACGT",
+      "ref": "ACGTACGTACGTACGTACGTACGTACGT"
+    },
+    "tipo_analisi": "dna_mutation_hamming"
+  },
+  "reproducibility": {
+    "julia_version": "1.10.2",
+    "package_manifest_hash": "sha256:manifest",
+    "seed_rng": 424242
+  },
+  "results": {
+    "metrics": {
+      "ok": 1
+    },
+    "scientific_hash": "sha256:216a98a5ac86766bc42f47496f6d468ef97749aeecfa0a43660477ecd8dae62b"
+  },
+  "security": {
+    "consensus_status": "PENDING",
+    "payload_hash": "sha256:857eac2bf58a51ecbabe4dcd81f08e1ebe2c704bb6f0dd95376b18bf635b5b17",
+    "pow_hash": "0",
+    "pow_nonce": 0,
+    "public_key": "",
+    "results_scientific_hash": "sha256:216a98a5ac86766bc42f47496f6d468ef97749aeecfa0a43660477ecd8dae62b",
+    "signature": ""
+  }
+}

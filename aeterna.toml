@@ -14,7 +14,7 @@
 [identity]
 # The Guardian's public identifier. Prometheus-0 is reserved for the genesis
 # reference node on the RTX 5070. Downstream deployments MUST rename.
-guardian_id              = "Prometheus-0"
+guardian_id              = "Prometheus-1"
 network                  = "aeterna-testnet-0"
 
 # Post-quantum cryptographic primitives for signature and key encapsulation.
@@ -48,6 +48,7 @@ enable_smart_heating     = true               # Economia del Calcolo — seasona
 
 [sentinel]
 # Python userland orchestrator — core/sentinel.py
+sentinel_version         = "0.2.0"
 bind_host                = "0.0.0.0"
 heartbeat_sec            = 30
 pow_difficulty           = 4                  # Leading zero bits on SHA-256
@@ -66,7 +67,7 @@ port                     = 4444
 buffer_bytes             = 65_535
 seen_cache_size          = 10_000             # Anti-storm deduplication
 peer_discovery           = "bootstrap_list"   # bootstrap_list | dht (future)
-bootstrap_peers          = ["udp://192.168.1.4:4444",
+bootstrap_peers          = ["udp://192.168.1.19:4444",
 ]
 rendezvous_hints         = [
     # "udp://<vps-ip>:4450",
@@ -92,12 +93,43 @@ temperature              = 0.3
 
 [vault]
 # Checkpoint and secret storage.
-storage_mode             = "local"            # local (v0.0.1 default) | ipfs (v0.5+)
+storage_mode             = "local_encrypted"  # local (v0.0.1 default) | local_encrypted (v0.2.0) | ipfs (v0.5+)
 local_path               = "./santuario/vault/checkpoints"
 encryption               = "aes-256-gcm"
 key_derivation           = "tpm2_sealed"      # Key is never in plaintext RAM
 integrity_check_min      = 60                 # α threshold — hourly checksum audit
 portscan_abort_count     = 3                  # γ threshold — stealth migration trigger
+
+[integrity]
+# ----------------------------------------------------------------------------
+# v0.2.0 "Custos" — α/β/γ threshold watchdog (santuario-integrity crate).
+# The Santuario periodically re-hashes the files below and refuses to sign
+# any further block if the SHA-256 of any entry drifts from the signed-off
+# baseline in santuario/integrity/baseline.json. See docs/sprint-v0.2.0.md
+# §3 Phase D for the acceptance contract.
+# ----------------------------------------------------------------------------
+
+# α — hourly SHA-256 sweep.
+interval_minutes         = 60
+files = [
+  "MANIFESTO.md",
+  "ETHICS.md",
+  "LICENSE",
+  "aeterna.toml",
+  "docs/AGP-v1.md",
+  "scientific/Manifest.toml",
+  "santuario/vault/manifest.json",
+]
+
+# β — CPU stress abort. Average CPU% over the window above the threshold
+# trips the β alert and puts the signer in degraded mode.
+cpu_threshold_pct        = 90.0
+cpu_window_seconds       = 600
+
+# γ — port-scan abort. This many distinct unsolicited scans from one peer
+# inside the window trips the γ alert.
+portscan_abort_count     = 3
+portscan_window_seconds  = 3600
 
 [nucleo]
 # Cognitive Trivium — enforced by the Santuario critic loop.

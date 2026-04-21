@@ -1,0 +1,40 @@
+{
+  "header": {
+    "node_id": "Guardian-1",
+    "protocol_version": "AGP-v1",
+    "timestamp": 1713542400
+  },
+  "payload": {
+    "id_task": "TASK-clean-36",
+    "parametri": {
+      "K": 1000000000000,
+      "N0": 1000000,
+      "days": 60,
+      "efficacia_farmaco": 0.3,
+      "giorno_inizio": 12,
+      "rho": 0.03,
+      "sigma": 0.1
+    },
+    "tipo_analisi": "tumor_therapy_sde"
+  },
+  "reproducibility": {
+    "julia_version": "1.10.2",
+    "package_manifest_hash": "sha256:manifest",
+    "seed_rng": 424242
+  },
+  "results": {
+    "metrics": {
+      "ok": 1
+    },
+    "scientific_hash": "sha256:28f253cfe758a95e74bfa999970d874be55f3484d6239ef528097489ab3ef449"
+  },
+  "security": {
+    "consensus_status": "PENDING",
+    "payload_hash": "sha256:71923747390f344dc6ab9ea1d3a26813f611f547126ee5582eb3811342e66cdd",
+    "pow_hash": "0",
+    "pow_nonce": 0,
+    "public_key": "",
+    "results_scientific_hash": "sha256:28f253cfe758a95e74bfa999970d874be55f3484d6239ef528097489ab3ef449",
+    "signature": ""
+  }
+}

@@ -1,0 +1,50 @@
+# Seccomp allowlist — minimal compute-only profile.
+#
+# Used by deterministic helper binaries (e.g. key generation, hash
+# workers) that must not touch the network or filesystem beyond the CWD.
+# Forbidden: all socket*, execve*, open beyond read-only, fork/clone.
+
+read
+write
+close
+fstat
+newfstatat
+lseek
+fcntl
+
+mmap
+munmap
+mprotect
+brk
+madvise
+
+futex
+set_tid_address
+set_robust_list
+get_robust_list
+clone3
+sched_yield
+
+rt_sigaction
+rt_sigprocmask
+rt_sigreturn
+sigaltstack
+
+clock_gettime
+clock_getres
+gettimeofday
+
+openat
+readlink
+getdents64
+
+getpid
+gettid
+getppid
+getuid
+geteuid
+uname
+arch_prctl
+
+exit
+exit_group

@@ -24,25 +24,37 @@ _sym_db = _symbol_database.Default()
 
 
 
-DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0csigner.proto\x12\x13santuario.signer.v1\"#\n\x0bSignRequest\x12\x14\n\x0cpayload_hash\x18\x01 \x01(\x0c\"!\n\x0cSignResponse\x12\x11\n\tsignature\x18\x01 \x01(\x0c\"L\n\rVerifyRequest\x12\x14\n\x0cpayload_hash\x18\x01 \x01(\x0c\x12\x11\n\tsignature\x18\x02 \x01(\x0c\x12\x12\n\npublic_key\x18\x03 \x01(\x0c\"\x1f\n\x0eVerifyResponse\x12\r\n\x05valid\x18\x01 \x01(\x08\"\x15\n\x13GetPublicKeyRequest\"*\n\x14GetPublicKeyResponse\x12\x12\n\npublic_key\x18\x01 \x01(\x0c\x32\x8d\x02\n\x06Signer\x12K\n\x04Sign\x12 .santuario.signer.v1.SignRequest\x1a!.santuario.signer.v1.SignResponse\x12Q\n\x06Verify\x12\".santuario.signer.v1.VerifyRequest\x1a#.santuario.signer.v1.VerifyResponse\x12\x63\n\x0cGetPublicKey\x12(.santuario.signer.v1.GetPublicKeyRequest\x1a).santuario.signer.v1.GetPublicKeyResponseb\x06proto3')
+DESCRIPTOR = _descriptor_pool.Default().AddSerializedFile(b'\n\x0csigner.proto\x12\x13santuario.signer.v1\"\x99\x01\n\x0bSignRequest\x12\x14\n\x0cpayload_hash\x18\x01 \x01(\x0c\x12\x16\n\x0e\x61gp_block_json\x18\x02 \x01(\x0c\x12\x19\n\x0cproducer_pid\x18\x03 \x01(\x05H\x00\x88\x01\x01\x12\x1c\n\x0fproducer_policy\x18\x04 \x01(\tH\x01\x88\x01\x01\x42\x0f\n\r_producer_pidB\x12\n\x10_producer_policy\"7\n\x0cSignResponse\x12\x11\n\tsignature\x18\x01 \x01(\x0c\x12\x14\n\x0cpayload_hash\x18\x02 \x01(\x0c\"L\n\rVerifyRequest\x12\x14\n\x0cpayload_hash\x18\x01 \x01(\x0c\x12\x11\n\tsignature\x18\x02 \x01(\x0c\x12\x12\n\npublic_key\x18\x03 \x01(\x0c\"\x1f\n\x0eVerifyResponse\x12\r\n\x05valid\x18\x01 \x01(\x08\"\x15\n\x13GetPublicKeyRequest\"*\n\x14GetPublicKeyResponse\x12\x12\n\npublic_key\x18\x01 \x01(\x0c\"\x12\n\x10GetStatusRequest\"\xcd\x01\n\x11GetStatusResponse\x12\x0f\n\x07verdict\x18\x01 \x01(\t\x12\x17\n\x0fsuspension_kind\x18\x02 \x01(\t\x12\x19\n\x11suspension_reason\x18\x03 \x01(\t\x12\x19\n\x11suspension_ts_utc\x18\x04 \x01(\x03\x12\x14\n\x0cvault_sealed\x18\x05 \x01(\x08\x12\x14\n\x0c\x63ritic_armed\x18\x06 \x01(\x08\x12\x14\n\x0cintegrity_ok\x18\x07 \x01(\x08\x12\x16\n\x0eseccomp_active\x18\x08 \x01(\x08\"2\n\x13TriggerAuditRequest\x12\x1b\n\x13\x61\x63\x63\x65pt_new_baseline\x18\x01 \x01(\x08\"D\n\x14TriggerAuditResponse\x12\x12\n\nmismatches\x18\x01 \x01(\x05\x12\x18\n\x10mismatched_paths\x18\x02 \x03(\t\"4\n\rResumeRequest\x12\x11\n\ttoken_hex\x18\x01 \x01(\t\x12\x10\n\x08operator\x18\x02 \x01(\t\"0\n\x0eResumeResponse\x12\x0f\n\x07resumed\x18\x01 \x01(\x08\x12\r\n\x05\x65rror\x18\x02 \x01(\t2\xa1\x04\n\x06Signer\x12K\n\x04Sign\x12 .santuario.signer.v1.SignRequest\x1a!.santuario.signer.v1.SignResponse\x12Q\n\x06Verify\x12\".santuario.signer.v1.VerifyRequest\x1a#.santuario.signer.v1.VerifyResponse\x12\x63\n\x0cGetPublicKey\x12(.santuario.signer.v1.GetPublicKeyRequest\x1a).santuario.signer.v1.GetPublicKeyResponse\x12Z\n\tGetStatus\x12%.santuario.signer.v1.GetStatusRequest\x1a&.santuario.signer.v1.GetStatusResponse\x12\x63\n\x0cTriggerAudit\x12(.santuario.signer.v1.TriggerAuditRequest\x1a).santuario.signer.v1.TriggerAuditResponse\x12Q\n\x06Resume\x12\".santuario.signer.v1.ResumeRequest\x1a#.santuario.signer.v1.ResumeResponseb\x06proto3')
 
 _globals = globals()
 _builder.BuildMessageAndEnumDescriptors(DESCRIPTOR, _globals)
 _builder.BuildTopDescriptorsAndMessages(DESCRIPTOR, 'signer_pb2', _globals)
 if not _descriptor._USE_C_DESCRIPTORS:
   DESCRIPTOR._loaded_options = None
-  _globals['_SIGNREQUEST']._serialized_start=37
-  _globals['_SIGNREQUEST']._serialized_end=72
-  _globals['_SIGNRESPONSE']._serialized_start=74
-  _globals['_SIGNRESPONSE']._serialized_end=107
-  _globals['_VERIFYREQUEST']._serialized_start=109
-  _globals['_VERIFYREQUEST']._serialized_end=185
-  _globals['_VERIFYRESPONSE']._serialized_start=187
-  _globals['_VERIFYRESPONSE']._serialized_end=218
-  _globals['_GETPUBLICKEYREQUEST']._serialized_start=220
-  _globals['_GETPUBLICKEYREQUEST']._serialized_end=241
-  _globals['_GETPUBLICKEYRESPONSE']._serialized_start=243
-  _globals['_GETPUBLICKEYRESPONSE']._serialized_end=285
-  _globals['_SIGNER']._serialized_start=288
-  _globals['_SIGNER']._serialized_end=557
+  _globals['_SIGNREQUEST']._serialized_start=38
+  _globals['_SIGNREQUEST']._serialized_end=191
+  _globals['_SIGNRESPONSE']._serialized_start=193
+  _globals['_SIGNRESPONSE']._serialized_end=248
+  _globals['_VERIFYREQUEST']._serialized_start=250
+  _globals['_VERIFYREQUEST']._serialized_end=326
+  _globals['_VERIFYRESPONSE']._serialized_start=328
+  _globals['_VERIFYRESPONSE']._serialized_end=359
+  _globals['_GETPUBLICKEYREQUEST']._serialized_start=361
+  _globals['_GETPUBLICKEYREQUEST']._serialized_end=382
+  _globals['_GETPUBLICKEYRESPONSE']._serialized_start=384
+  _globals['_GETPUBLICKEYRESPONSE']._serialized_end=426
+  _globals['_GETSTATUSREQUEST']._serialized_start=428
+  _globals['_GETSTATUSREQUEST']._serialized_end=446
+  _globals['_GETSTATUSRESPONSE']._serialized_start=449
+  _globals['_GETSTATUSRESPONSE']._serialized_end=654
+  _globals['_TRIGGERAUDITREQUEST']._serialized_start=656
+  _globals['_TRIGGERAUDITREQUEST']._serialized_end=706
+  _globals['_TRIGGERAUDITRESPONSE']._serialized_start=708
+  _globals['_TRIGGERAUDITRESPONSE']._serialized_end=776
+  _globals['_RESUMEREQUEST']._serialized_start=778
+  _globals['_RESUMEREQUEST']._serialized_end=830
+  _globals['_RESUMERESPONSE']._serialized_start=832
+  _globals['_RESUMERESPONSE']._serialized_end=880
+  _globals['_SIGNER']._serialized_start=883
+  _globals['_SIGNER']._serialized_end=1428
 # @@protoc_insertion_point(module_scope)

@@ -1,0 +1,141 @@
+# Seccomp allowlist — Julia scientific engine (`scientific/zmq_server.jl`).
+#
+# Discovered incrementally by running Julia 1.10 under an ENOSYS-default
+# filter with strace -ff and adding whatever it legitimately needed. The
+# Phase B demo is: run `scripts/smoke_test.py` and observe every task
+# kind succeeds; then manually patch the Julia source to call
+# `Sys.exec("ls")` and watch the filter kill it.
+#
+# Forbidden by construction: execve, execveat, ptrace, setuid, keyctl,
+# add_key, unshare, prctl(PR_SET_SECCOMP, ...), mount, reboot, init_module,
+# create_module, finit_module, bpf, io_uring_*, open_tree, move_mount,
+# fsopen, fsconfig, fsmount, fspick, kexec_load, kexec_file_load.
+
+# ---- essential libc / runtime -----------------------------------------------
+read
+write
+readv
+writev
+pread64
+pwrite64
+close
+fstat
+newfstatat
+lstat
+stat
+statx
+lseek
+dup
+dup2
+dup3
+fcntl
+ioctl
+pipe
+pipe2
+poll
+ppoll
+epoll_create
+epoll_create1
+epoll_ctl
+epoll_wait
+epoll_pwait
+select
+pselect6
+
+# ---- memory / GC -------------------------------------------------------------
+mmap
+munmap
+mremap
+mprotect
+madvise
+brk
+membarrier
+
+# ---- threading / futex -------------------------------------------------------
+futex
+get_robust_list
+set_robust_list
+clone
+clone3
+set_tid_address
+sched_yield
+sched_getaffinity
+sched_setaffinity
+prlimit64
+getrlimit
+getrusage
+
+# ---- signals -----------------------------------------------------------------
+rt_sigaction
+rt_sigprocmask
+rt_sigreturn
+rt_sigpending
+rt_sigsuspend
+sigaltstack
+tgkill
+kill
+
+# ---- time --------------------------------------------------------------------
+clock_gettime
+clock_getres
+clock_nanosleep
+gettimeofday
+nanosleep
+
+# ---- file system (narrow: read-only except process's own data dir) -----------
+openat
+open
+access
+faccessat
+faccessat2
+getcwd
+readlink
+readlinkat
+getdents
+getdents64
+chdir
+fchdir
+flock
+mkdir
+mkdirat
+rmdir
+
+# ---- ZMQ socket pair (loopback only) -----------------------------------------
+socket
+socketpair
+bind
+listen
+accept
+accept4
+connect
+getsockname
+getpeername
+getsockopt
+setsockopt
+shutdown
+sendto
+recvfrom
+sendmsg
+recvmsg
+sendmmsg
+recvmmsg
+
+# ---- identity / process info -------------------------------------------------
+getpid
+gettid
+getppid
+getuid
+geteuid
+getgid
+getegid
+getpgid
+getpgrp
+getgroups
+uname
+arch_prctl
+
+# ---- exit / exec (exit only — execve is NOT on the list) ---------------------
+exit
+exit_group
+wait4
+waitid

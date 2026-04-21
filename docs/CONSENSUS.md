@@ -26,7 +26,7 @@ resources are spent validating their output.
 
 **How:** the `x/guardian` module checks the SBT signature, the attestation
 bundle (TPM 2.0 / SGX / SEV depending on trust tier), and the IBC-imported
-reputation proof.
+reputation proof. In v0.2.0, the Santuario also acts as a local admission gatekeeper: it enforces TPM2-backed vault sealing on boot and degrades the node to passive observation if the vault cannot be unsealed.
 
 ## Level 1 — Execution: `PoUW / Proof of Useful Work`
 
@@ -53,7 +53,7 @@ minutes of GPU time to produce.
 **How:** `arkworks` / `bellman` circuits defined per task kind. v0.0.1 ships
 *without* the circuits — validation is performed by naive re-execution on a
 random subset of peers (RANDAO-selected). Real ZK proofs land in v0.5.0 as
-part of the `aeterna_oracle` CosmWasm contract.
+part of the `aeterna_oracle` CosmWasm contract. As of v0.2.0, the Santuario's Critic loop runs deterministic axiom checks (reflexive, symbolic, axiomatic) before a Dilithium-5 signature is produced, guaranteeing that the validation block complies with the Prometheus Clause.
 
 ## Level 3 — Persistence: `PoI / Proof of Integrity`
 

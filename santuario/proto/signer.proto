@@ -1,18 +1,73 @@
 syntax = "proto3";
 package santuario.signer.v1;
 
+// v0.2.0 "Custos": the signer is no longer a bare Dilithium-5 oracle.
+// Every `Sign` carries an AGP-v1 block; the signer runs the critic's
+// three checks (reflexive, symbolic, axiomatic) and verifies the
+// producer PID's seccomp attestation before emitting a signature. A
+// suspended signer (α/β/γ threshold) rejects every Sign regardless.
+
 service Signer {
+    // Sign an AGP-v1 block. The block is the canonical JSON bytes of
+    // the full envelope (header, payload, reproducibility, results,
+    // security). On success the server returns a Dilithium-5 detached
+    // signature over SHA-256(payload || reproducibility || results).
+    //
+    // Errors (Status codes):
+    //   FAILED_PRECONDITION   -> signer is suspended (see GetStatus)
+    //   PERMISSION_DENIED     -> PID attestation failed
+    //   INVALID_ARGUMENT      -> block parse / schema violation
+    //   ABORTED               -> reflexive / symbolic / axiomatic
+    //                            violation (see Violation)
     rpc Sign (SignRequest) returns (SignResponse);
+
+    // Verify a detached Dilithium-5 signature against a payload hash.
     rpc Verify (VerifyRequest) returns (VerifyResponse);
+
+    // Fetch the public key used by this signer. Guardians publish this
+    // on the gossip network as part of their identity block.
     rpc GetPublicKey (GetPublicKeyRequest) returns (GetPublicKeyResponse);
+
+    // Report the current operational status of the signer.
+    rpc GetStatus (GetStatusRequest) returns (GetStatusResponse);
+
+    // Manually trigger the α integrity sweep now. Used by
+    // `santuarioctl audit --now` for tests / drills.
+    rpc TriggerAudit (TriggerAuditRequest) returns (TriggerAuditResponse);
+
+    // Operator-signed resume: present a Dilithium-5 signature over the
+    // outstanding challenge to clear a suspension.
+    rpc Resume (ResumeRequest) returns (ResumeResponse);
 }
 
+// --- Core sign path ---------------------------------------------------------
+
 message SignRequest {
+    // Option A (v0.1.0 compat) — raw 32-byte SHA-256 digest. Only
+    // accepted when the signer runs with `--feature permissive`; the
+    // production path uses Option B.
     bytes payload_hash = 1;
+
+    // Option B (v0.2.0) — canonical JSON of the AGP-v1 block. When set,
+    // the signer runs the critic over it and derives the payload hash
+    // itself.
+    bytes agp_block_json = 2;
+
+    // Producer PID — the launcher-attested PID whose output this block
+    // represents. Required when `strict-attestation` feature is on.
+    optional int32 producer_pid = 3;
+
+    // The policy kind the producer was launched under, as declared by
+    // the sentinel. Must match what the isolation launcher recorded.
+    optional string producer_policy = 4;
 }
 
 message SignResponse {
     bytes signature = 1;
+    // Echoed-back 32-byte hash the signer actually signed. The client
+    // must compare against its own canonical-JSON hash; mismatch
+    // indicates a canonicalization bug.
+    bytes payload_hash = 2;
 }
 
 message VerifyRequest {
@@ -29,4 +84,48 @@ message GetPublicKeyRequest {}
 
 message GetPublicKeyResponse {
     bytes public_key = 1;
+}
+
+// --- Status and control -----------------------------------------------------
+
+message GetStatusRequest {}
+
+message GetStatusResponse {
+    // One of: "ready", "suspended".
+    string verdict = 1;
+    // If suspended, the greek letter and reason.
+    string suspension_kind = 2;
+    string suspension_reason = 3;
+    int64  suspension_ts_utc = 4;
+    // Vault/critic/integrity sub-status booleans.
+    bool vault_sealed   = 5;
+    bool critic_armed   = 6;
+    bool integrity_ok   = 7;
+    bool seccomp_active = 8;
+}
+
+message TriggerAuditRequest {
+    // If true, reseal the baseline (operator-accepted-new-state).
+    bool accept_new_baseline = 1;
+}
+
+message TriggerAuditResponse {
+    // Number of files that changed vs baseline. 0 = clean.
+    int32 mismatches = 1;
+    // If non-empty, the operator must acknowledge each path before the
+    // new baseline is accepted.
+    repeated string mismatched_paths = 2;
+}
+
+message ResumeRequest {
+    // Hex-encoded Dilithium-5 SignedMessage or DetachedSignature over
+    // the outstanding challenge.
+    string token_hex = 1;
+    // Free-form operator label for the audit log.
+    string operator = 2;
+}
+
+message ResumeResponse {
+    bool resumed = 1;
+    string error = 2;
 }

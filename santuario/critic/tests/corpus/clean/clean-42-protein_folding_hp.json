@@ -1,0 +1,35 @@
+{
+  "header": {
+    "node_id": "Guardian-2",
+    "protocol_version": "AGP-v1",
+    "timestamp": 1713542400
+  },
+  "payload": {
+    "id_task": "TASK-clean-42",
+    "parametri": {
+      "sequence": "HPHPHPHPHPHP",
+      "steps": 1000
+    },
+    "tipo_analisi": "protein_folding_hp"
+  },
+  "reproducibility": {
+    "julia_version": "1.10.2",
+    "package_manifest_hash": "sha256:manifest",
+    "seed_rng": 424242
+  },
+  "results": {
+    "metrics": {
+      "ok": 1
+    },
+    "scientific_hash": "sha256:2cedb2fb8ef19e7f3b7274b6236d68ddd9a169dd5b77debf917c7ffeb02d353a"
+  },
+  "security": {
+    "consensus_status": "PENDING",
+    "payload_hash": "sha256:c567ac4d08a330c5c72b712d6aa975eabedec07ef7612f803a87f9abe6507583",
+    "pow_hash": "0",
+    "pow_nonce": 0,
+    "public_key": "",
+    "results_scientific_hash": "sha256:2cedb2fb8ef19e7f3b7274b6236d68ddd9a169dd5b77debf917c7ffeb02d353a",
+    "signature": ""
+  }
+}
