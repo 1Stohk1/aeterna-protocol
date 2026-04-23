@@ -63,10 +63,7 @@ impl Policy {
             if line.is_empty() {
                 continue;
             }
-            if !line
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_')
-            {
+            if !line.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
                 return Err(IsolationError::PolicyInvalid(format!(
                     "{}:{}: illegal characters in syscall name '{}'",
                     path.display(),

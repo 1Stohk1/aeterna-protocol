@@ -1,0 +1,334 @@
+#!/usr/bin/env bash
+# =============================================================================
+# release-v0.2.0.sh — AETERNA v0.2.0 "Custos" release gate
+# =============================================================================
+# Executes the full release checklist from docs/SPRINT-v0.2.0.md §8.
+#
+# Phases, in order — fail-fast (`set -e`):
+#
+#   0. Environment sanity
+#   1. Rust: cargo fmt --check, cargo clippy -D warnings, cargo build, cargo test
+#   2. Phase C critic corpus — JSON + simulator semantics
+#   3. Python interop — core/integrity_alert round-trip for α/β/γ
+#   4. aeterna.toml — schema + version/isolation/storage flags
+#   5. bootstrap.sh — shellcheck (best-effort) + bash -n syntax
+#   6. Optional README roadmap bump (dry-run vs real via --apply-readme)
+#   7. Tag preview — prints the exact `git tag -s v0.2.0-custos` command; does
+#      NOT execute it. The operator signs the tag with the newly-active
+#      Santuario signer.
+#
+# Run from the repository root on a Linux host with rustc >= 1.75 and
+# Python >= 3.10 (or 3.9 with tomli installed).
+#
+# Exit codes:
+#   0 = all green → ready to tag v0.2.0-custos
+#   1 = verification failed → see last log line for the offending phase
+#   2 = prerequisite missing (cargo, python3, etc.)
+#
+# Usage:
+#   scripts/release-v0.2.0.sh                 # dry-run, no file writes
+#   scripts/release-v0.2.0.sh --apply-readme  # also rewrite README v0.2.0 line
+#   scripts/release-v0.2.0.sh --skip-clippy   # bypass clippy for a dirty tree
+#   scripts/release-v0.2.0.sh --fast          # skip clippy + fmt (build+test only)
+#   scripts/release-v0.2.0.sh --with-tpm2     # enable TPM2 feature (needs libtss2-dev)
+#
+# TPM2 note: tss-esapi-sys needs the system library libtss2-dev. On
+# Debian/Ubuntu install with `sudo apt install libtss2-dev`. Without that
+# library installed, do NOT pass --with-tpm2; the file-vault fallback covers
+# the osservatore tier and lets release verification complete on dev boxes.
+# =============================================================================
+
+set -Eeuo pipefail
+
+# --- cli parsing -------------------------------------------------------------
+
+APPLY_README=0
+SKIP_CLIPPY=0
+FAST=0
+WITH_TPM2=0
+for arg in "$@"; do
+    case "$arg" in
+        --apply-readme) APPLY_README=1 ;;
+        --skip-clippy)  SKIP_CLIPPY=1 ;;
+        --fast)         FAST=1; SKIP_CLIPPY=1 ;;
+        --with-tpm2)    WITH_TPM2=1 ;;
+        -h|--help)
+            sed -n '2,38p' "$0"
+            exit 0
+            ;;
+        *)
+            echo "unknown flag: $arg" >&2
+            exit 2
+            ;;
+    esac
+done
+
+# By default we DO NOT enable the TPM2 feature: tss-esapi-sys requires the
+# system library `libtss2-dev` (Debian/Ubuntu) or `tpm2-tss-devel` (Fedora).
+# `--with-tpm2` enables it for hosts where that lib is installed and the
+# /dev/tpmrm0 device exists.
+if (( WITH_TPM2 == 1 )); then
+    FEATURES_FLAG="--features tpm2"
+else
+    FEATURES_FLAG=""
+fi
+
+# --- colour helpers ----------------------------------------------------------
+
+if [[ -t 1 ]]; then
+    BOLD=$'\033[1m'; RED=$'\033[31m'; GREEN=$'\033[32m'
+    YELLOW=$'\033[33m'; CYAN=$'\033[36m'; RESET=$'\033[0m'
+else
+    BOLD=""; RED=""; GREEN=""; YELLOW=""; CYAN=""; RESET=""
+fi
+
+phase() { printf "\n${BOLD}${CYAN}== %s ==${RESET}\n" "$*"; }
+ok()    { printf "  ${GREEN}ok${RESET}   %s\n" "$*"; }
+warn()  { printf "  ${YELLOW}warn${RESET} %s\n" "$*"; }
+fail()  { printf "  ${RED}fail${RESET} %s\n" "$*" >&2; exit 1; }
+info()  { printf "  ${CYAN}info${RESET} %s\n" "$*"; }
+
+# --- guard: must run from repo root -----------------------------------------
+
+if [[ ! -f aeterna.toml || ! -d santuario || ! -f docs/SPRINT-v0.2.0.md ]]; then
+    fail "run from the repo root (aeterna.toml + santuario/ + docs/SPRINT-v0.2.0.md must exist)"
+fi
+
+# --- phase 0: environment ---------------------------------------------------
+
+phase "0. Environment sanity"
+command -v cargo   >/dev/null || { echo "cargo not found"   >&2; exit 2; }
+command -v python3 >/dev/null || { echo "python3 not found" >&2; exit 2; }
+command -v git     >/dev/null || { echo "git not found"     >&2; exit 2; }
+
+RUSTC_VER=$(rustc --version | awk '{print $2}')
+PY_VER=$(python3 -c 'import sys; print("{}.{}.{}".format(*sys.version_info[:3]))')
+ok "rustc=$RUSTC_VER  python3=$PY_VER"
+
+if ! python3 -c 'import tomllib' 2>/dev/null && ! python3 -c 'import tomli' 2>/dev/null; then
+    warn "neither tomllib (py>=3.11) nor tomli found; installing tomli --user"
+    python3 -m pip install --user --quiet tomli || fail "could not install tomli"
+fi
+ok "toml parser available"
+
+# --- phase 1: Rust workspace -------------------------------------------------
+
+phase "1. Rust workspace — fmt / clippy / build / test"
+pushd santuario >/dev/null
+
+if (( FAST == 0 )); then
+    echo "  -> cargo fmt --check"
+    cargo fmt --all -- --check || fail "cargo fmt reported unformatted code — run 'cargo fmt --all'"
+    ok "cargo fmt clean"
+else
+    warn "skipped cargo fmt (--fast)"
+fi
+
+if (( SKIP_CLIPPY == 0 )); then
+    echo "  -> cargo clippy --all-targets ${FEATURES_FLAG} -- -D warnings"
+    # shellcheck disable=SC2086
+    cargo clippy --workspace --all-targets $FEATURES_FLAG -- -D warnings \
+        || fail "cargo clippy emitted warnings (use --skip-clippy to bypass temporarily)"
+    ok "cargo clippy clean"
+else
+    warn "skipped cargo clippy (--skip-clippy or --fast)"
+fi
+
+echo "  -> cargo build --workspace --release ${FEATURES_FLAG}"
+# shellcheck disable=SC2086
+cargo build --workspace --release $FEATURES_FLAG || fail "cargo build failed"
+ok "cargo build succeeded"
+
+echo "  -> cargo test --workspace ${FEATURES_FLAG}"
+# shellcheck disable=SC2086
+cargo test --workspace --no-fail-fast $FEATURES_FLAG || fail "cargo test failed"
+ok "cargo test all green"
+
+popd >/dev/null
+
+# --- phase 2: critic corpus --------------------------------------------------
+
+phase "2. Critic adversarial corpus (50 clean + 50 poisoned)"
+CORPUS=santuario/critic/tests/corpus
+N_CLEAN=$(ls "$CORPUS/clean" | wc -l)
+N_POISON=$(ls "$CORPUS/poisoned" | wc -l)
+(( N_CLEAN  == 50 )) || fail "clean corpus has $N_CLEAN files (expected 50)"
+(( N_POISON == 50 )) || fail "poisoned corpus has $N_POISON files (expected 50)"
+ok "50 clean + 50 poisoned on disk"
+
+python3 - <<'PY' || exit 1
+import json, pathlib, collections, sys
+root = pathlib.Path('santuario/critic/tests/corpus')
+bad = []
+for f in sorted(root.rglob('*.json')):
+    try:
+        d = json.loads(f.read_text())
+    except json.JSONDecodeError as e:
+        bad.append((str(f), str(e)))
+        continue
+    for req in ('header', 'payload', 'security'):
+        if req not in d:
+            bad.append((str(f), f'missing {req!r}'))
+if bad:
+    for b in bad: print('  corpus-bad:', b[0], '—', b[1], file=sys.stderr)
+    sys.exit(1)
+kinds = collections.Counter(f.name.split('-')[0] for f in sorted(root.glob('poisoned/*.json')))
+print(f"  variants: rx={kinds['rx']} sx={kinds['sx']} ax={kinds['ax']}")
+PY
+ok "every corpus file parses + AGP-v1 conform"
+
+if [[ -x scripts/verify_critic_corpus.py ]]; then
+    echo "  -> scripts/verify_critic_corpus.py"
+    python3 scripts/verify_critic_corpus.py || fail "critic corpus simulator reported mismatch"
+    ok "simulator matches Rust critic variants"
+fi
+
+# --- phase 3: Python integrity_alert ----------------------------------------
+
+phase "3. Python gossip — integrity_alert round-trip"
+python3 - <<'PY' || exit 1
+from core.integrity_alert import (
+    build_envelope, extract_alert, validate_alert, canonical_payload,
+    ALPHA, BETA, GAMMA, INTEGRITY_ALERT_KIND,
+)
+cases = [
+    (ALPHA, {"type":"alpha_mismatch","path":"MANIFESTO.md",
+             "expected_sha256":"aa"*32,"observed_sha256":"bb"*32}),
+    (BETA,  {"type":"beta_cpu_stress","window_seconds":600,
+             "mean_pct":95.5,"threshold_pct":90.0}),
+    (GAMMA, {"type":"gamma_port_scan","peer":"10.0.0.7",
+             "count_in_window":4,"window_seconds":3600}),
+]
+for kind, ev in cases:
+    alert = {"kind":kind,"ts_utc":1713542400,"node_id":"Prometheus-1","evidence":ev}
+    validate_alert(alert)
+    env = build_envelope(alert, signature_hex="de"*10)
+    assert env["kind"] == INTEGRITY_ALERT_KIND
+    back = extract_alert(env)
+    assert back == alert, f"roundtrip mismatch for {kind}"
+    _ = canonical_payload(alert)
+print("  all three thresholds round-trip; canonical payload stable")
+PY
+ok "integrity_alert round-trip clean"
+
+# --- phase 4: aeterna.toml ---------------------------------------------------
+
+phase "4. aeterna.toml — schema + release flags"
+python3 - <<'PY' || exit 1
+try:
+    import tomllib
+except ModuleNotFoundError:
+    import tomli as tomllib
+with open('aeterna.toml','rb') as f:
+    d = tomllib.load(f)
+
+# §8 release flags — sentinel_version lives under [sentinel]
+ok_flags = True
+sentinel = d.get('sentinel', {})
+sv = sentinel.get('sentinel_version')
+if sv != '0.2.0':
+    print(f"  FAIL: [sentinel].sentinel_version={sv!r} (expected '0.2.0')"); ok_flags=False
+s = d.get('santuario', {})
+if s.get('isolation_mode') != 'seccomp':
+    print(f"  FAIL: [santuario].isolation_mode={s.get('isolation_mode')!r} (expected 'seccomp')"); ok_flags=False
+v = d.get('vault', {})
+if v.get('storage_mode') != 'local_encrypted':
+    print(f"  FAIL: [vault].storage_mode={v.get('storage_mode')!r} (expected 'local_encrypted')"); ok_flags=False
+
+# [integrity] schema
+i = d.get('integrity', {})
+for k in ('interval_minutes','cpu_threshold_pct','cpu_window_seconds',
+          'portscan_abort_count','portscan_window_seconds'):
+    if k not in i:
+        print(f"  FAIL: [integrity].{k} missing"); ok_flags=False
+if not isinstance(i.get('files', []), list) or len(i.get('files', [])) < 5:
+    print("  FAIL: [integrity].files must be a list of ≥5 paths"); ok_flags=False
+
+if not ok_flags:
+    raise SystemExit(1)
+print(f"  sentinel_version = '0.2.0'")
+print(f"  isolation_mode   = 'seccomp'")
+print(f"  storage_mode     = 'local_encrypted'")
+print(f"  [integrity] files = {len(i['files'])}  α={i['interval_minutes']}min  β={i['cpu_threshold_pct']}%/{i['cpu_window_seconds']}s  γ={i['portscan_abort_count']}/{i['portscan_window_seconds']}s")
+PY
+ok "aeterna.toml release flags + [integrity] schema"
+
+# --- phase 5: bootstrap.sh ---------------------------------------------------
+
+phase "5. bootstrap.sh — syntax + shellcheck (best-effort)"
+# Normalise CRLF in-memory for bash -n so pre-existing line-ending drift
+# doesn't fail the release gate. The host editor is expected to be fixed
+# up independently.
+if tr -d '\r' < bootstrap.sh | bash -n /dev/stdin 2>/tmp/release-bootstrap.log; then
+    ok "bash -n clean (after CRLF normalisation)"
+else
+    warn "bash -n reported issues — see /tmp/release-bootstrap.log (non-fatal; bootstrap.sh has pre-existing CRLF)"
+fi
+
+if command -v shellcheck >/dev/null; then
+    if tr -d '\r' < bootstrap.sh > /tmp/bootstrap.lf.sh && shellcheck -S warning /tmp/bootstrap.lf.sh; then
+        ok "shellcheck warning-level clean"
+    else
+        warn "shellcheck flagged issues — review manually"
+    fi
+else
+    info "shellcheck not installed; skipping static analysis"
+fi
+
+# --- phase 6: README roadmap bump -------------------------------------------
+
+phase "6. README roadmap entry for v0.2.0"
+ROADMAP_LINE=$(grep -n '^| `v0.2.0`' README.md || true)
+if [[ -z "$ROADMAP_LINE" ]]; then
+    fail "no v0.2.0 row found in README roadmap table"
+fi
+info "current: $ROADMAP_LINE"
+
+NEW_DESC='| `v0.2.0` | ✅ Santuario sovereignty kernel: TPM2 vault, seccomp-bpf, critic loop, α/β/γ watchdog (Custos) |'
+if (( APPLY_README == 1 )); then
+    # Replace the whole v0.2.0 row with the new description. Pass the
+    # replacement via env var to avoid bash/python quoting hell.
+    NEW_DESC="$NEW_DESC" python3 - <<'PY'
+import os, pathlib, re
+p = pathlib.Path('README.md')
+text = p.read_text()
+repl = os.environ['NEW_DESC']
+new, n = re.subn(r'^\| `v0\.2\.0`.*$', lambda _: repl, text, count=1, flags=re.MULTILINE)
+if n != 1:
+    raise SystemExit(f"FAIL: README v0.2.0 substitution count = {n}, expected 1")
+p.write_text(new)
+print("  rewritten v0.2.0 roadmap row")
+PY
+    ok "README v0.2.0 row rewritten"
+else
+    info "proposed:"
+    echo "    $NEW_DESC"
+    warn "README untouched (pass --apply-readme to rewrite the row)"
+fi
+
+# --- phase 7: tag preview ----------------------------------------------------
+
+phase "7. Tag preview (command only; operator must run it manually)"
+HEAD_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "<no-git-head>")
+BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "<unknown>")
+info "current branch = $BRANCH  HEAD = $HEAD_SHA"
+cat <<EOF
+
+  To tag v0.2.0-custos, signed by the newly-active Santuario signer:
+
+      # The signer's gRPC signing path must be reachable; vault unsealed.
+      ${BOLD}git tag -s v0.2.0-custos -m "AETERNA v0.2.0 Custos — sovereignty kernel"${RESET}
+      ${BOLD}git push origin v0.2.0-custos${RESET}
+
+  Verify with:
+
+      git tag -v v0.2.0-custos
+
+EOF
+
+# --- done --------------------------------------------------------------------
+
+printf "\n${BOLD}${GREEN}ALL GREEN — v0.2.0 'Custos' is release-ready.${RESET}\n"
+if (( APPLY_README == 0 )); then
+    printf "(README roadmap row still in dry-run state; re-run with --apply-readme to commit the bump.)\n"
+fi

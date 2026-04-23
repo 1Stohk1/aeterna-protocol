@@ -101,8 +101,8 @@ pub fn try_resume(
     }
     let chal_hex = std::fs::read_to_string(&ctx.challenge_path)
         .map_err(|e| RecoveryError::ChallengeCorrupt(e.to_string()))?;
-    let challenge = hex::decode(chal_hex.trim())
-        .map_err(|e| RecoveryError::ChallengeCorrupt(e.to_string()))?;
+    let challenge =
+        hex::decode(chal_hex.trim()).map_err(|e| RecoveryError::ChallengeCorrupt(e.to_string()))?;
     if challenge.len() != CHALLENGE_LEN {
         return Err(RecoveryError::ChallengeCorrupt(format!(
             "expected {CHALLENGE_LEN} bytes, got {}",
@@ -113,15 +113,14 @@ pub fn try_resume(
     // Load the operator public key.
     let pk_bytes = std::fs::read(&ctx.operator_pubkey_path)
         .map_err(|e| RecoveryError::PubkeyIo(e.to_string()))?;
-    let pk = dilithium5::PublicKey::from_bytes(&pk_bytes)
-        .map_err(|_| RecoveryError::PubkeyInvalid)?;
+    let pk =
+        dilithium5::PublicKey::from_bytes(&pk_bytes).map_err(|_| RecoveryError::PubkeyInvalid)?;
 
     // Decode the token (Dilithium-5 signed message). The operator signs
     // the challenge as the message; we accept either the
     // signed-message (open) form or the detached-signature form.
     let raw = hex::decode(token_hex.trim()).map_err(|e| RecoveryError::TokenHex(e.to_string()))?;
-    let ok = verify_signed_message(&raw, &challenge, &pk)
-        || verify_detached(&raw, &challenge, &pk);
+    let ok = verify_signed_message(&raw, &challenge, &pk) || verify_detached(&raw, &challenge, &pk);
     if !ok {
         return Err(RecoveryError::BadSignature);
     }
@@ -156,10 +155,14 @@ fn verify_detached(raw: &[u8], msg: &[u8], pk: &dilithium5::PublicKey) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pqcrypto_traits::sign::PublicKey as _;
     use santuario_integrity::{AlertKind, SignerState};
 
-    fn setup() -> (tempfile::TempDir, RecoveryContext, SignerState, dilithium5::SecretKey) {
+    fn setup() -> (
+        tempfile::TempDir,
+        RecoveryContext,
+        SignerState,
+        dilithium5::SecretKey,
+    ) {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         std::fs::create_dir_all(root.join("santuario/integrity")).unwrap();
@@ -189,9 +192,7 @@ mod tests {
         let (_dir, ctx, state, sk) = setup();
         let chal = issue_challenge(&ctx).unwrap();
         let det = dilithium5::detached_sign(&chal, &sk);
-        let token = hex::encode(
-            pqcrypto_traits::sign::DetachedSignature::as_bytes(&det),
-        );
+        let token = hex::encode(pqcrypto_traits::sign::DetachedSignature::as_bytes(&det));
         try_resume(&ctx, &state, &token, "christian").unwrap();
         assert!(state.is_ready());
     }

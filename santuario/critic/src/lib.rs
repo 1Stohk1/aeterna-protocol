@@ -143,7 +143,7 @@ impl DefaultCritic {
     pub fn new() -> Self {
         Self {
             forbidden_terms: default_forbidden_terms()
-                .into_iter()
+                .iter()
                 .map(|s| s.to_string())
                 .collect(),
         }
@@ -206,7 +206,7 @@ pub fn canonical_hash_input(block: &Block) -> Result<Vec<u8>, serde_json::Error>
     // order otherwise. Using Value::to_string produces stable output for
     // scalars but Object ordering follows insertion; sort explicitly.
     let sorted = sort_json_keys(&obj);
-    Ok(serde_json::to_vec(&sorted)?)
+    serde_json::to_vec(&sorted)
 }
 
 fn sort_json_keys(v: &serde_json::Value) -> serde_json::Value {

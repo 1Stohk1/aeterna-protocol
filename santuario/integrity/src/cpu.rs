@@ -93,9 +93,8 @@ impl CpuMonitor {
 /// run as osservatore anyway).
 pub fn sample_cpu_global() -> f32 {
     use sysinfo::{CpuRefreshKind, RefreshKind, System};
-    let mut sys = System::new_with_specifics(
-        RefreshKind::new().with_cpu(CpuRefreshKind::everything()),
-    );
+    let mut sys =
+        System::new_with_specifics(RefreshKind::new().with_cpu(CpuRefreshKind::everything()));
     sys.refresh_cpu();
     // sysinfo API needs two samples separated by MINIMUM_CPU_UPDATE_INTERVAL;
     // callers on a periodic tick naturally satisfy this.

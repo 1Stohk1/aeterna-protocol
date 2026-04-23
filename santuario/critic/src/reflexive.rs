@@ -35,9 +35,7 @@ pub fn check_reflexive(block: &Block) -> Result<(), Violation> {
     let claimed = &block.security.payload_hash;
     // Accept both the `sha256:HEX` form used on the wire and a bare hex form
     // for older fixtures — but they must decode to the same digest bytes.
-    let normalise = |s: &str| -> String {
-        s.trim_start_matches("sha256:").to_ascii_lowercase()
-    };
+    let normalise = |s: &str| -> String { s.trim_start_matches("sha256:").to_ascii_lowercase() };
     if normalise(&computed) != normalise(claimed) {
         return Err(Violation::reflexive(format!(
             "payload_hash mismatch: claimed={claimed} computed={computed}"

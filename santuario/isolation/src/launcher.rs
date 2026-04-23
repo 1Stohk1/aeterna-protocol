@@ -21,16 +21,13 @@
 
 #![cfg(target_os = "linux")]
 
-use std::ffi::{CString, OsStr};
+use std::ffi::CString;
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-use crate::{
-    hash_file, now_utc, Attestation, IsolationError, LaunchSpec, LaunchedChild, Launcher,
-    PolicyKind,
-};
 use crate::policy::Policy;
+use crate::{hash_file, now_utc, Attestation, IsolationError, LaunchSpec, LaunchedChild, Launcher};
 
 /// In-process table: pid -> attestation. The signer queries this before
 /// every signature; unknown PIDs are refused.
@@ -103,10 +100,7 @@ impl Launcher for SeccompLauncher {
     }
 
     fn attest(&self, pid: i32) -> Result<Attestation, IsolationError> {
-        let att = self
-            .table
-            .get(pid)
-            .ok_or(IsolationError::UnknownPid(pid))?;
+        let att = self.table.get(pid).ok_or(IsolationError::UnknownPid(pid))?;
         if !pid_alive(pid) {
             return Err(IsolationError::Dead(pid));
         }

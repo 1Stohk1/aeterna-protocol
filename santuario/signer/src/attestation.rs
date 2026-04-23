@@ -53,12 +53,14 @@ impl AttestationGate {
 
     /// Override the strict bit — useful for tests and for the
     /// bootstrap-driven toggle.
+    #[allow(dead_code)]
     pub fn with_strict(mut self, strict: bool) -> Self {
         self.strict = strict;
         self
     }
 
     /// Whether this gate is currently enforcing. Off in dev, on in prod.
+    #[allow(dead_code)]
     pub fn is_strict(&self) -> bool {
         self.strict
     }
@@ -157,9 +159,7 @@ mod tests {
         let l = FakeLauncher::new();
         l.record(fixture(77, PolicyKind::Julia));
         let gate = AttestationGate::new(l.clone());
-        let err = gate
-            .verify(Some(77), PolicyKind::LlmInference)
-            .unwrap_err();
+        let err = gate.verify(Some(77), PolicyKind::LlmInference).unwrap_err();
         matches!(err, AttestationError::PolicyMismatch { .. });
     }
 
@@ -168,7 +168,10 @@ mod tests {
         let l = FakeLauncher::new();
         let gate = AttestationGate::new(l.clone());
         let err = gate.verify(Some(99), PolicyKind::Julia).unwrap_err();
-        matches!(err, AttestationError::Isolation(IsolationError::UnknownPid(99)));
+        matches!(
+            err,
+            AttestationError::Isolation(IsolationError::UnknownPid(99))
+        );
     }
 
     #[test]

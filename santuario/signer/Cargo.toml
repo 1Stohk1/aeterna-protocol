@@ -40,7 +40,11 @@ chrono      = { workspace = true }
 clap        = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
-nix = { workspace = true }
+nix   = { workspace = true }
+# `tower::service_fn` is used by santuarioctl to dial the signer over UDS
+# via `tonic::transport::Endpoint::connect_with_connector`. tonic 0.10
+# consumes a `tower::Service` but does not re-export it.
+tower = "0.4"
 
 [build-dependencies]
 tonic-build         = "0.10"

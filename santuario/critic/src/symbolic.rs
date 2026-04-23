@@ -55,7 +55,8 @@ pub fn check_symbolic(block: &Block) -> Result<(), Violation> {
             if r.len() != o.len() {
                 return Err(Violation::symbolic(format!(
                     "dna_mutation_hamming: ref and obs must be equal length, got {} vs {}",
-                    r.len(), o.len()
+                    r.len(),
+                    o.len()
                 )));
             }
         }
@@ -68,7 +69,15 @@ pub fn check_symbolic(block: &Block) -> Result<(), Violation> {
         "tumor_therapy_sde" => {
             require_fields(
                 p,
-                &["N0", "rho", "K", "sigma", "days", "efficacia_farmaco", "giorno_inizio"],
+                &[
+                    "N0",
+                    "rho",
+                    "K",
+                    "sigma",
+                    "days",
+                    "efficacia_farmaco",
+                    "giorno_inizio",
+                ],
                 t,
             )?;
             require_positive_float(p, "N0")?;
@@ -92,9 +101,9 @@ pub fn check_symbolic(block: &Block) -> Result<(), Violation> {
 }
 
 fn require_fields(v: &Value, fields: &[&str], kind: &str) -> Result<(), Violation> {
-    let obj = v.as_object().ok_or_else(|| {
-        Violation::symbolic(format!("parametri for '{kind}' must be an object"))
-    })?;
+    let obj = v
+        .as_object()
+        .ok_or_else(|| Violation::symbolic(format!("parametri for '{kind}' must be an object")))?;
     for f in fields {
         if !obj.contains_key(*f) {
             return Err(Violation::symbolic(format!(
@@ -106,10 +115,11 @@ fn require_fields(v: &Value, fields: &[&str], kind: &str) -> Result<(), Violatio
 }
 
 fn require_positive_float(v: &Value, field: &str) -> Result<(), Violation> {
-    let x = v.get(field).and_then(|x| x.as_f64()).ok_or_else(|| {
-        Violation::symbolic(format!("parametri.{field} must be a number"))
-    })?;
-    if !(x > 0.0) || !x.is_finite() {
+    let x = v
+        .get(field)
+        .and_then(|x| x.as_f64())
+        .ok_or_else(|| Violation::symbolic(format!("parametri.{field} must be a number")))?;
+    if !x.is_finite() || x <= 0.0 {
         return Err(Violation::symbolic(format!(
             "parametri.{field} must be positive and finite, got {x}"
         )));
@@ -118,9 +128,10 @@ fn require_positive_float(v: &Value, field: &str) -> Result<(), Violation> {
 }
 
 fn require_positive_int(v: &Value, field: &str) -> Result<(), Violation> {
-    let x = v.get(field).and_then(|x| x.as_i64()).ok_or_else(|| {
-        Violation::symbolic(format!("parametri.{field} must be an integer"))
-    })?;
+    let x = v
+        .get(field)
+        .and_then(|x| x.as_i64())
+        .ok_or_else(|| Violation::symbolic(format!("parametri.{field} must be an integer")))?;
     if x <= 0 {
         return Err(Violation::symbolic(format!(
             "parametri.{field} must be positive, got {x}"

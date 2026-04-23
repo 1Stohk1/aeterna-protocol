@@ -19,7 +19,7 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use pqcrypto_dilithium::dilithium5;
-use pqcrypto_traits::sign::{DetachedSignature, PublicKey as _, SignedMessage as _};
+use pqcrypto_traits::sign::{DetachedSignature, PublicKey as _};
 use tonic::{transport::Server, Request, Response, Status};
 
 pub mod santuario {
@@ -46,9 +46,7 @@ use keystore::KeyStore;
 use recovery::RecoveryContext;
 
 use santuario_critic::{parse_block, Critic, DefaultCritic, Violation};
-use santuario_integrity::{
-    AlertKind, AuditLog, IntegrityAlert, IntegrityAuditor, IntegrityConfig, SignerState,
-};
+use santuario_integrity::{AuditLog, IntegrityAuditor, IntegrityConfig, SignerState};
 use santuario_isolation::{Launcher, PolicyKind};
 
 /// Full set of collaborators the gRPC service needs on every request.
@@ -182,7 +180,12 @@ impl Signer for SantuarioSigner {
                 kind,
                 reason,
                 ts_utc,
-            } => ("suspended".to_string(), kind.name().to_string(), reason, ts_utc),
+            } => (
+                "suspended".to_string(),
+                kind.name().to_string(),
+                reason,
+                ts_utc,
+            ),
         };
         Ok(Response::new(GetStatusResponse {
             verdict: verdict_str,
@@ -280,9 +283,9 @@ fn violation_to_status(v: Violation) -> Status {
 
 fn attestation_to_status(e: AttestationError) -> Status {
     match e {
-        AttestationError::Required => Status::permission_denied(
-            "producer_pid required in strict attestation mode",
-        ),
+        AttestationError::Required => {
+            Status::permission_denied("producer_pid required in strict attestation mode")
+        }
         AttestationError::PolicyMismatch { .. } => Status::permission_denied(e.to_string()),
         AttestationError::Isolation(ie) => Status::permission_denied(ie.to_string()),
     }
@@ -470,7 +473,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         perms.set_mode(0o600);
         std::fs::set_permissions(&socket_path, perms)?;
 
-        log::info!("Santuario Signer v0.2.0 starting on UDS {}", socket_path.display());
+        log::info!(
+            "Santuario Signer v0.2.0 starting on UDS {}",
+            socket_path.display()
+        );
         server.serve_with_incoming(uds_stream).await?;
     }
 

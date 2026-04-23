@@ -15,20 +15,14 @@ use serde::{Deserialize, Serialize};
 use crate::{now_utc, IntegrityAlert, IntegrityError};
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
-#[serde(tag = "kind", rename_all = "snake_case")]
+#[serde(tag = "record", rename_all = "snake_case")]
 pub enum AuditRecord {
     /// An α/β/γ alert fired.
     Alert(IntegrityAlert),
     /// The signer voluntarily suspended (e.g. on receiving an alert).
-    SignerSuspend {
-        ts_utc: i64,
-        reason: String,
-    },
+    SignerSuspend { ts_utc: i64, reason: String },
     /// An operator produced a recovery token and cleared the suspension.
-    SignerResume {
-        ts_utc: i64,
-        operator: String,
-    },
+    SignerResume { ts_utc: i64, operator: String },
     /// An operator accepted a new baseline for the α sweep.
     BaselineSealed {
         ts_utc: i64,

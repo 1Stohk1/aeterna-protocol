@@ -46,14 +46,14 @@ fn expected_variant(name: &str) -> &'static str {
 }
 
 fn matches_variant(v: &Violation, expected: &str) -> bool {
-    match (v, expected) {
-        (Violation::Reflexive { .. }, "reflexive") => true,
-        (Violation::Symbolic { .. }, "symbolic") => true,
-        (Violation::Axiomatic { .. }, "axiomatic") => true,
-        (Violation::Malformed { .. }, "malformed") => true,
-        (_, "any") => true,
-        _ => false,
-    }
+    matches!(
+        (v, expected),
+        (Violation::Reflexive { .. }, "reflexive")
+            | (Violation::Symbolic { .. }, "symbolic")
+            | (Violation::Axiomatic { .. }, "axiomatic")
+            | (Violation::Malformed { .. }, "malformed")
+            | (_, "any")
+    )
 }
 
 #[test]

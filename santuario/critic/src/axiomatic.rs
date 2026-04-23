@@ -39,7 +39,11 @@ pub fn check_axiomatic(block: &Block, forbidden_terms: &[String]) -> Result<(), 
     // - Reject blocks that admit consensus_status == REJECTED but still
     //   claim a signature is due. The signer must not add signatures to
     //   already-rejected blocks.
-    if block.security.consensus_status.eq_ignore_ascii_case("REJECTED") {
+    if block
+        .security
+        .consensus_status
+        .eq_ignore_ascii_case("REJECTED")
+    {
         return Err(Violation::axiomatic(
             "consensus_status=REJECTED: signer refuses to endorse a rejected block",
         ));
@@ -93,7 +97,10 @@ mod tests {
     }
 
     fn terms() -> Vec<String> {
-        default_forbidden_terms().iter().map(|s| s.to_string()).collect()
+        default_forbidden_terms()
+            .iter()
+            .map(|s| s.to_string())
+            .collect()
     }
 
     #[test]
@@ -115,7 +122,8 @@ mod tests {
     fn mass_surveillance_term_rejected() {
         let mut b = base();
         b.payload.tipo_analisi = "genome_analysis".to_string();
-        b.payload.parametri = json!({"sequence":"ACGT","purpose":"mass_surveillance of dissidents"});
+        b.payload.parametri =
+            json!({"sequence":"ACGT","purpose":"mass_surveillance of dissidents"});
         match check_axiomatic(&b, &terms()) {
             Err(Violation::Axiomatic { .. }) => {}
             other => panic!("expected Axiomatic, got {other:?}"),

@@ -164,12 +164,11 @@ mod tests {
         // new burst from same peer, after the latch's window expired
         let mut re_fire = false;
         for i in 20..25 {
-            if m
-                .observe(ScanEvent {
-                    peer: "10.0.0.1".into(),
-                    ts_utc: i,
-                })
-                .is_some()
+            if m.observe(ScanEvent {
+                peer: "10.0.0.1".into(),
+                ts_utc: i,
+            })
+            .is_some()
             {
                 re_fire = true;
             }
