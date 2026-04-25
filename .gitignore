@@ -27,7 +27,14 @@ env/
 .ruff_cache/
 
 # --- Julia ---
+# By default we ignore Manifest.toml (Julia convention for libraries: only
+# the Project.toml is sources of truth, the lockfile is environment-local).
+# BUT scientific/ is an APPLICATION, not a library: aeterna.toml pins the
+# Julia version (freeze_julia_version) and demands a hash of the manifest
+# (require_manifest_hash). For reproducibility the lockfile is part of the
+# release artifact, so we explicitly un-ignore it.
 Manifest.toml
+!scientific/Manifest.toml
 /scientific/.CondaPkg/
 deps/usr/
 deps/deps.jl

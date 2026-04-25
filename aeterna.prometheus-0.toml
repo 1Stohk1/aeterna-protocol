@@ -1,0 +1,178 @@
+# ============================================================================
+#  AETERNA — Prometheus-0 Node Configuration (dev twin)
+#  Version: AGP-v1 / Node v0.0.1 "Genesis"
+# ----------------------------------------------------------------------------
+#  This file is a sibling of aeterna.toml (which describes Prometheus-1, the
+#  default LAN node). Prometheus-0 is the second instance you can run on the
+#  same workstation for end-to-end gossip / consensus rehearsals.
+#
+#  Every port-bearing knob has been shifted by +1 (or +2 for Streamlit) so the
+#  two instances can coexist without bind collisions:
+#
+#                        Prometheus-1 (default)   Prometheus-0 (this file)
+#    sentinel.zmq        :5555                    :5556
+#    santuario gRPC      :50051                   :50052   (CLI: -SantuarioPort)
+#    gossip UDP          :4444                    :4445
+#    war_room HTTP       :8501                    :8502
+#    prometheus exporter :9477                    :9478
+#
+#  Run with:
+#    .\bootstrap.ps1 -Config aeterna.prometheus-0.toml `
+#                    -SantuarioPort 50052 -ZmqPort 5556
+# ============================================================================
+
+[identity]
+guardian_id              = "Prometheus-0"
+network                  = "aeterna-testnet-0"
+
+pqc_sig_algorithm        = "Dilithium-5"
+pqc_kem_algorithm        = "Kyber-1024"
+
+hardware_binding         = true
+tee_backend              = "tpm2"
+min_trust_level_boot     = "guardiano"
+
+[ethics]
+accept_agpl_license      = true
+accept_prometeo_clause   = true
+
+[hardware]
+gpu_model                = "RTX 5070"
+vram_gb                  = 12
+vram_reserved_pct        = 15
+cpu_stress_abort_pct     = 90
+cpu_stress_window_min    = 10
+enable_smart_heating     = true
+
+[sentinel]
+sentinel_version         = "0.2.0"
+bind_host                = "0.0.0.0"
+heartbeat_sec            = 30
+pow_difficulty           = 4
+harvest_strategy         = "gossip"
+log_level                = "info"
+
+[sentinel.zmq]
+# Shifted +1 vs the default node so two engines can run on localhost.
+endpoint                 = "tcp://localhost:5556"
+send_timeout_ms          = 30_000
+recv_timeout_ms          = 600_000
+
+[gossip]
+# +1 vs the default node. Prometheus-0 bootstraps off Prometheus-1.
+port                     = 4445
+buffer_bytes             = 65_535
+seen_cache_size          = 10_000
+peer_discovery           = "bootstrap_list"
+bootstrap_peers          = ["udp://127.0.0.1:4444"]
+rendezvous_hints         = []
+fanout                   = 4
+ttl                      = 7
+
+[santuario]
+enabled                  = true
+isolation_mode           = "seccomp"
+kernel_filter            = "seccomp-bpf"
+ipc_transport            = "grpc_uds"
+ipc_socket               = "/run/aeterna/santuario.sock"
+
+[santuario.llm]
+model_engine             = "llama.cpp"
+model_name               = "Llama-3-8B-Instruct-Q4"
+model_cid                = ""
+max_tokens               = 4096
+temperature              = 0.3
+
+[vault]
+storage_mode             = "local_encrypted"
+local_path               = "./santuario/vault/checkpoints-p0"
+encryption               = "aes-256-gcm"
+key_derivation           = "tpm2_sealed"
+integrity_check_min      = 60
+portscan_abort_count     = 3
+
+[integrity]
+interval_minutes         = 60
+files = [
+  "MANIFESTO.md",
+  "ETHICS.md",
+  "LICENSE",
+  "aeterna.toml",
+  "docs/AGP-v1.md",
+  "scientific/Manifest.toml",
+  "santuario/vault/manifest.json",
+]
+
+cpu_threshold_pct        = 90.0
+cpu_window_seconds       = 600
+
+portscan_abort_count     = 3
+portscan_window_seconds  = 3600
+
+[operations]
+# Shifted vs the default node so both War Rooms / exporters can be open.
+war_room_bind_host       = "127.0.0.1"
+war_room_port            = 8502
+war_room_public_bind     = false
+
+prometheus_bind_host     = "127.0.0.1"
+prometheus_port          = 9478
+
+[operations.telegram]
+# The dev twin does NOT join Telegram. Keep it off so the prod token stays
+# bound to a single signer; flip on a separate token here if you really want
+# to test the bot against Prometheus-0.
+enabled                  = false
+token                    = ""
+allowed_chat_ids         = []
+admin_target             = ""
+poll_interval_seconds    = 5
+alert_kinds              = ["alert", "suspend", "recovery_token_issued"]
+audit_tail_limit         = 50
+rate_limit_per_second    = 1
+
+[nucleo]
+reflexive_enabled        = true
+symbolic_validator       = true
+axiomatic_controller     = true
+episodic_memory_days     = 30
+semantic_memory_mode     = "vector_store"
+
+[prometeo]
+enabled                  = true
+dual_use_filter          = "semantic+rule"
+honeypot_rate            = 0.01
+
+[consensus]
+omega_sybil              = 0.15
+omega_useful_work        = 0.40
+omega_cognition          = 0.30
+omega_integrity          = 0.15
+poc_sample_rate_pct      = 100
+slash_lambda             = 0.25
+
+[bitcoin_anchor]
+enabled                  = false
+epoch_blocks             = 10_000
+critical_event_triggers  = [
+    "global_model_cid_update",
+    "governance_omega_change",
+    "emergency_slash_major_validator",
+]
+
+[mission]
+active                   = "missione_alpha"
+default_task             = "tumor_growth_gompertz"
+
+[agp]
+protocol_version         = "AGP-v1"
+seed_source              = "sentinel"
+freeze_julia_version     = "1.10.2"
+require_manifest_hash    = true
+
+[logging]
+# Separate log files so tailing one node doesn't interleave with the other.
+format                   = "json"
+sentinel_log             = "./logs/sentinel-p0.jsonl"
+audit_log                = "./logs/audit-p0.jsonl"
+rotate_mb                = 50
