@@ -1,26 +1,33 @@
 # =============================================================================
-# AETERNA -- bootstrap.ps1 (Windows orchestrator, v2 "Tripod")
+# AETERNA -- bootstrap.ps1 (Windows orchestrator, v2 "Tripod" + exporter)
 # =============================================================================
 #
-# Starts the three-headed Prometheus stack in the right order and tears it
+# Starts the four-headed Prometheus stack in the right order and tears it
 # down in reverse. Each head has an independent failure mode, and the v1
 # launcher (just Start-Process + Start-Sleep) was too fragile to absorb them:
 #
-#   1. santuario-signer  (Rust, gRPC :SantuarioPort)     -- source of truth
-#   2. scientific engine (Julia, ZMQ REP :ZmqPort)       -- compute back end
-#   3. sentinel          (Python, in foreground)         -- policy brain
+#   1. santuario-signer   (Rust, gRPC :SantuarioPort)    -- source of truth
+#   2. scientific engine  (Julia, ZMQ REP :ZmqPort)      -- compute back end
+#   3. santuario-exporter (Rust, HTTP :ExporterPort)     -- Prometheus surface
+#   4. sentinel           (Python, in foreground)        -- policy brain
 #
-# The three must come up in that order because:
+# The four must come up in that order because:
 #   * Sentinel.__init__ does a blocking gRPC handshake against the signer and
 #     raises SantuarioUnavailable if nobody answers on :SantuarioPort.
 #   * Sentinel opens a ZMQ REQ channel to the Julia engine right after, so
 #     Julia must be bound on :ZmqPort before the Sentinel finishes init.
+#   * The exporter consumes the same Admin gRPC the Sentinel uses; it
+#     starts AFTER the signer so its first scrape lands on a live target
+#     (it'd survive a cold scrape, but the boot-time logs would carry an
+#     ugly "connection refused" line nobody wants to grep past).
 #
 # Teardown must be reverse-order (LIFO):
 #   * Sentinel exits first (Ctrl-C from foreground).
-#   * Julia is killed next.
-#   * Signer is killed last -- if we kill it first the Sentinel sees a gRPC
-#     failure storm on its way out and the audit log gets noisy for nothing.
+#   * Exporter is killed next -- it stops scraping a fading signer.
+#   * Julia is killed.
+#   * Signer is killed last -- if we kill it first the Sentinel + exporter
+#     both see a gRPC failure storm on their way out and the audit log gets
+#     noisy for nothing.
 #
 # Zombie-process guard: every Start-Process handle we spawn is tracked in a
 # list, and the finally-block iterates that list in reverse. This is what
@@ -59,14 +66,22 @@
 #                      requirements" -- typically Statistics pinned to
 #                      1.10.0 (Julia 1.10 stdlib) but you're now on 1.11+.
 #                      Implies -InstallDeps for the Julia leg.
+#   -ExporterPort      TCP port for the Prometheus text-exposition HTTP
+#                      endpoint. Default 9477. Also exported as
+#                      $env:AETERNA_EXPORTER_BIND = "127.0.0.1:$ExporterPort"
+#                      so the exporter binary picks it up via clap-env.
+#                      Bind is forced to loopback -- no LAN exposure.
 #   -SkipSigner        Don't launch santuario-signer -- useful when you're
 #                      running the signer under `cargo run` in another
 #                      pane for faster rebuild cycles. You still get
 #                      sentinel + julia from here.
 #   -SkipJulia         Don't launch the scientific engine -- for pure
 #                      signer<->sentinel smoke tests.
+#   -SkipExporter      Don't launch the Prometheus exporter. Use during
+#                      War Room / Telegram bot iteration where the HTTP
+#                      surface is dead weight.
 #   -SkipSentinel      Don't launch Sentinel -- for bringing up just the
-#                      two back-end daemons (e.g. while iterating on the
+#                      back-end daemons (e.g. while iterating on the
 #                      War Room streamlit or the Telegram bot).
 #   -SignerProfile     release (default) | debug -- selects both the cargo
 #                      build profile AND the target subdir we spawn from
@@ -81,6 +96,10 @@
 #                      generous; a warm signer is usually ready in <1s.
 #   -ZmqReadyTimeoutSec How long to wait for Julia. Default 90s; Julia
 #                      precompile on first boot after an update is slow.
+#   -ExporterReadyTimeoutSec  How long to wait for the exporter's HTTP
+#                      socket. Default 60s. The hyper bind is fast; the
+#                      budget mainly covers the cargo build of the
+#                      exporter crate on a clean checkout.
 #
 # Examples
 # -------------------------------------------------------------------------
@@ -97,8 +116,10 @@
 #       the lockfile, regenerates from Project.toml, then proceeds.
 #
 #   .\bootstrap.ps1 -Config aeterna.prometheus-0.toml `
-#                   -SantuarioPort 50052 -ZmqPort 5556
-#       Run a second instance in parallel on different ports.
+#                   -SantuarioPort 50052 -ZmqPort 5556 -ExporterPort 9478
+#       Run a second instance in parallel on different ports. The
+#       exporter port is shifted too so both /metrics endpoints can be
+#       scraped by a single Prometheus job (one target per node).
 #
 #   .\bootstrap.ps1 -SkipSigner
 #       I already have `cargo run` running in another shell; just bring
@@ -110,15 +131,18 @@ param(
     [string]   $Config              = "aeterna.toml",
     [int]      $SantuarioPort       = 50051,
     [int]      $ZmqPort             = 5555,
+    [int]      $ExporterPort        = 9477,
     [switch]   $InstallDeps,
     [switch]   $RegenJuliaManifest,
     [switch]   $SkipSigner,
     [switch]   $SkipJulia,
+    [switch]   $SkipExporter,
     [switch]   $SkipSentinel,
     [ValidateSet("release", "debug")]
     [string]   $SignerProfile       = "release",
-    [int]      $SignerReadyTimeoutSec = 120,
-    [int]      $ZmqReadyTimeoutSec    = 90
+    [int]      $SignerReadyTimeoutSec   = 120,
+    [int]      $ZmqReadyTimeoutSec      = 90,
+    [int]      $ExporterReadyTimeoutSec = 60
 )
 
 $ErrorActionPreference = "Stop"
@@ -132,15 +156,16 @@ $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $RepoRoot
 
 $Banner = @"
->>> AETERNA bootstrap v2 "Tripod" (Windows Edition)
+>>> AETERNA bootstrap v2 "Tripod+Oculus" (Windows Edition)
     repo                : $RepoRoot
     config              : $Config
     santuario port      : $SantuarioPort
     zmq port            : $ZmqPort
+    exporter port       : $ExporterPort
     signer profile      : $SignerProfile
     install deps        : $($InstallDeps.IsPresent)
     regen julia manifest: $($RegenJuliaManifest.IsPresent)
-    skip signer/julia/sentinel : $($SkipSigner.IsPresent) / $($SkipJulia.IsPresent) / $($SkipSentinel.IsPresent)
+    skip signer/julia/exporter/sentinel : $($SkipSigner.IsPresent) / $($SkipJulia.IsPresent) / $($SkipExporter.IsPresent) / $($SkipSentinel.IsPresent)
 "@
 Write-Host $Banner -ForegroundColor Cyan
 
@@ -348,6 +373,7 @@ function Wait-TcpReady {
 # ---------------------------------------------------------------------------
 $env:SANTUARIO_PORT        = "$SantuarioPort"
 $env:AETERNA_ZMQ_ENDPOINT  = "tcp://*:$ZmqPort"
+$env:AETERNA_EXPORTER_BIND = "127.0.0.1:$ExporterPort"
 
 
 # ---------------------------------------------------------------------------
@@ -369,7 +395,7 @@ try {
     #     walk, lockfile check) and the signer is online in <1s instead of
     #     ~2s.
     if (-not $SkipSigner) {
-        Write-Host "[1/3] Building Santuario signer ($SignerProfile) ..." -ForegroundColor Cyan
+        Write-Host "[1/4] Building Santuario signer ($SignerProfile) ..." -ForegroundColor Cyan
         $buildArgs = @(
             "build",
             "--manifest-path", "santuario\Cargo.toml",
@@ -390,7 +416,7 @@ try {
             throw "[FATAL] Build succeeded but binary missing at $signerExe -- check Cargo.toml [[bin]] sections."
         }
 
-        Write-Host "[1/3] Launching Santuario signer ($SignerProfile) ..." -ForegroundColor Cyan
+        Write-Host "[1/4] Launching Santuario signer ($SignerProfile) ..." -ForegroundColor Cyan
         Start-Child -Label "santuario-signer" `
                     -FilePath $signerExe `
                     -ArgumentList @() `
@@ -398,12 +424,12 @@ try {
         Wait-TcpReady -Port $SantuarioPort -TimeoutSec $SignerReadyTimeoutSec `
                       -Label "santuario-signer"
     } else {
-        Write-Host "[1/3] -SkipSigner: assuming signer already running on :$SantuarioPort" -ForegroundColor DarkYellow
+        Write-Host "[1/4] -SkipSigner: assuming signer already running on :$SantuarioPort" -ForegroundColor DarkYellow
     }
 
     # ------ 2. Julia scientific engine -----------------------------------
     if (-not $SkipJulia) {
-        Write-Host "[2/3] Launching scientific engine (Julia, ZMQ) ..." -ForegroundColor Cyan
+        Write-Host "[2/4] Launching scientific engine (Julia, ZMQ) ..." -ForegroundColor Cyan
         Start-Child -Label "scientific-engine" `
                     -FilePath "julia" `
                     -ArgumentList @("--project=scientific", "scientific\zmq_server.jl") `
@@ -411,12 +437,59 @@ try {
         Wait-TcpReady -Port $ZmqPort -TimeoutSec $ZmqReadyTimeoutSec `
                       -Label "scientific-engine"
     } else {
-        Write-Host "[2/3] -SkipJulia: assuming engine already running on :$ZmqPort" -ForegroundColor DarkYellow
+        Write-Host "[2/4] -SkipJulia: assuming engine already running on :$ZmqPort" -ForegroundColor DarkYellow
     }
 
-    # ------ 3. Sentinel (foreground) -------------------------------------
+    # ------ 3. Santuario exporter (Prometheus HTTP) ----------------------
+    # Same build->spawn discipline as the signer. The exporter is a Rust
+    # crate in the same workspace, so cargo's incremental build means the
+    # second-and-onwards launches add ~half a second of compile time.
+    #
+    # The exporter binds to 127.0.0.1 by default (forced by the binary's
+    # clap default; bootstrap.ps1 echoes that bind via $env:AETERNA_EXPORTER_BIND).
+    # If you ever need LAN exposure, put a reverse proxy with auth in
+    # front -- the exporter has no auth surface itself.
+    if (-not $SkipExporter) {
+        Write-Host "[3/4] Building Santuario exporter ($SignerProfile) ..." -ForegroundColor Cyan
+        $exporterBuildArgs = @(
+            "build",
+            "--manifest-path", "santuario\Cargo.toml",
+            "-p", "santuario-exporter",
+            "--bin", "santuario-exporter",
+            "--quiet"
+        )
+        if ($SignerProfile -eq "release") { $exporterBuildArgs += "--release" }
+        & cargo @exporterBuildArgs
+        if ($LASTEXITCODE -ne 0) {
+            throw "[FATAL] cargo build (exporter) failed (exit $LASTEXITCODE)."
+        }
+
+        $exporterExe = Join-Path $RepoRoot ("santuario\target\$SignerProfile\santuario-exporter.exe")
+        if (-not (Test-Path $exporterExe)) {
+            throw "[FATAL] Build succeeded but exporter binary missing at $exporterExe."
+        }
+
+        Write-Host "[3/4] Launching Santuario exporter ($SignerProfile) ..." -ForegroundColor Cyan
+        # The exporter reads $env:AETERNA_EXPORTER_BIND and $env:SANTUARIO_PORT
+        # via clap-env, so we forward them explicitly via ExtraEnv (defence
+        # in depth -- they're already in the parent env, but per-child env
+        # makes the wiring obvious in process inspectors).
+        Start-Child -Label "santuario-exporter" `
+                    -FilePath $exporterExe `
+                    -ArgumentList @() `
+                    -ExtraEnv @{
+                        AETERNA_EXPORTER_BIND = "127.0.0.1:$ExporterPort"
+                        SANTUARIO_PORT        = "$SantuarioPort"
+                    } | Out-Null
+        Wait-TcpReady -Port $ExporterPort -TimeoutSec $ExporterReadyTimeoutSec `
+                      -Label "santuario-exporter"
+    } else {
+        Write-Host "[3/4] -SkipExporter: Prometheus surface disabled." -ForegroundColor DarkYellow
+    }
+
+    # ------ 4. Sentinel (foreground) -------------------------------------
     if (-not $SkipSentinel) {
-        Write-Host "[3/3] Launching Sentinel (foreground -- Ctrl-C to stop) ..." -ForegroundColor Cyan
+        Write-Host "[4/4] Launching Sentinel (foreground -- Ctrl-C to stop) ..." -ForegroundColor Cyan
         # Sentinel runs in the CURRENT shell so Ctrl-C reaches it and the
         # finally-block gets to run cleanly. @PyPreArgs splats the "-3"
         # when Resolve-Python picked py.exe, and splats nothing otherwise.
@@ -424,7 +497,7 @@ try {
         $sentinelExit = $LASTEXITCODE
         Write-Host ("[i] Sentinel exited with code {0}" -f $sentinelExit) -ForegroundColor DarkGray
     } else {
-        Write-Host "[3/3] -SkipSentinel: back-ends are up; exit with Ctrl-C to tear them down." -ForegroundColor DarkYellow
+        Write-Host "[4/4] -SkipSentinel: back-ends are up; exit with Ctrl-C to tear them down." -ForegroundColor DarkYellow
         # Keep the parent alive so Ctrl-C still triggers finally{}.
         while ($true) { Start-Sleep -Seconds 3600 }
     }

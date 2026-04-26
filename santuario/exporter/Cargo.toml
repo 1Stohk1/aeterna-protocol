@@ -1,0 +1,50 @@
+[package]
+name        = "santuario-exporter"
+description = "Prometheus text-format exporter for AETERNA. Polls the Santuario Admin gRPC and re-publishes the registry as a /metrics endpoint."
+version.workspace      = true
+edition.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[dependencies]
+# gRPC client (Admin service)
+tonic        = { workspace = true }
+prost        = { workspace = true }
+tokio        = { workspace = true }
+
+# HTTP server -- hyper 0.14 directly. Avoids pulling axum + a second hyper
+# major version into the workspace; the exporter has exactly one route
+# (`GET /metrics`) so axum's routing/state machinery would be dead weight.
+hyper        = { version = "0.14", features = ["server", "http1", "http2", "tcp", "stream"] }
+
+# Errors / logging
+anyhow       = { workspace = true }
+log          = { workspace = true }
+env_logger   = { workspace = true }
+
+# CLI. The `env` feature is NOT in the workspace baseline (which only
+# pulls `derive` for the signer's CLIs), but the exporter reads its
+# entire config from environment variables when bootstrap.ps1 launches
+# it -- so we union the `env` feature locally. Cargo unions features
+# from the workspace dep + local features = ["derive", "env"], no
+# blast radius on other crates.
+clap         = { workspace = true, features = ["env"] }
+
+[build-dependencies]
+# Generate the Admin gRPC client locally rather than re-exporting it from
+# santuario-signer. Pro: this crate compiles standalone, no path dep on the
+# signer (which would also drag in tokio-stream, dilithium, the vault, etc).
+# Con: two copies of the generated descriptors live in the workspace.
+# Trade-off chosen: build hygiene > artifact size (the descriptors are <50 KB).
+tonic-build         = "0.10"
+protoc-bin-vendored = "3"
+
+[dev-dependencies]
+# Pure render-layer tests use synthetic AdminMetrics fixtures, so no extra
+# transport machinery is needed.
+
+[[bin]]
+name = "santuario-exporter"
+path = "src/main.rs"
