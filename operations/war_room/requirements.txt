@@ -1,0 +1,27 @@
+# AETERNA v0.3.0 "Oculus" — War Room dependencies.
+#
+# Pinned exactly. See SPRINT-v0.3.0 §6 Risk #5: "Streamlit version churn
+# breaks the dashboard between releases — mitigation: pin Streamlit and
+# rely on the smoke test to catch upgrade surprises before they land on
+# operators."
+#
+# Regenerate protobuf stubs with:
+#
+#   pip install 'grpcio-tools<1.68'           # gencode targets protobuf 5.x
+#   python -m grpc_tools.protoc \
+#     --proto_path=../../santuario/proto \
+#     --python_out=. \
+#     --grpc_python_out=. \
+#     ../../santuario/proto/admin.proto
+#
+# Why `grpcio-tools<1.68`? Streamlit 1.37.1 pins `protobuf<6`, but
+# grpcio-tools 1.68+ ships gencode that requires protobuf runtime
+# >= 6.31. Keeping the toolchain on 1.67.x emits protobuf-5 gencode
+# which is runtime-compatible with the Streamlit-permitted protobuf.
+# When we bump Streamlit past the point where it allows protobuf 6,
+# bump grpcio-tools here too and regenerate.
+
+streamlit==1.37.1
+streamlit-autorefresh==1.0.1
+grpcio>=1.67.1,<2
+protobuf>=5.27,<6

@@ -48,7 +48,7 @@ enable_smart_heating     = true               # Economia del Calcolo — seasona
 
 [sentinel]
 # Python userland orchestrator — core/sentinel.py
-sentinel_version         = "0.2.0"
+sentinel_version         = "0.3.0"
 bind_host                = "0.0.0.0"
 heartbeat_sec            = 30
 pow_difficulty           = 4                  # Leading zero bits on SHA-256
@@ -130,6 +130,49 @@ cpu_window_seconds       = 600
 # inside the window trips the γ alert.
 portscan_abort_count     = 3
 portscan_window_seconds  = 3600
+
+[operations]
+# ----------------------------------------------------------------------------
+# v0.3.0 "Oculus" — operator observability surfaces. All three default to
+# loopback-only: a sleepy operator exposing any of these beyond 127.0.0.1
+# requires an explicit override AND a reverse proxy with auth in front.
+# See SPRINT-v0.3.0.md §6 Risk #1.
+# ----------------------------------------------------------------------------
+
+# Streamlit War Room dashboard (operations/war_room/app.py).
+war_room_bind_host       = "127.0.0.1"
+war_room_port            = 8501
+war_room_public_bind     = false              # Force LAN bind only via launcher flag
+
+# Prometheus exporter (operations/prometheus/exporter.py, Phase D).
+prometheus_bind_host     = "127.0.0.1"
+prometheus_port          = 9477
+
+[operations.telegram]
+# ----------------------------------------------------------------------------
+# Telegram operator bot (operations/telegram_bot/bot.py, Phase C).
+# Zero-trust by default: `enabled = false` AND empty `allowed_chat_ids` AND
+# empty `token` means the bot refuses to start. Provisioning is a two-step
+# "log & restart" flow — see operations/telegram_bot/README.md §Allowlist.
+#
+# Security contract:
+#   * Bot is READ-ONLY on the signer. Same surface as the War Room
+#     (GetMetrics / TailAuditLog / ListPeers), no new RPCs, no sign path.
+#   * Unauthorized chat ids are SILENTLY IGNORED. The bot never confirms
+#     its own existence to a wrong chat — only stderr gets the id, so the
+#     operator can whitelist it. This mirrors the "ssh on 22 drops port
+#     scans in /var/log/auth.log" pattern.
+#   * `token` here is allowed for dev convenience but production should
+#     set $AETERNA_TELEGRAM_TOKEN env var instead (env override wins).
+# ----------------------------------------------------------------------------
+enabled                  = false
+token                    = "8610030747:AAEDuu1ZFyBdpXjKHFK0w4a_Kvnqr0eV5nc"                              # Prefer $AETERNA_TELEGRAM_TOKEN
+allowed_chat_ids         = []                              # int list, populate after 1st run
+admin_target             = ""                              # "" = resolve like the War Room
+poll_interval_seconds    = 5                               # Alert poll cadence (>= 2)
+alert_kinds              = ["alert", "suspend", "recovery_token_issued"]
+audit_tail_limit         = 50                              # Cap for /tail N command
+rate_limit_per_second    = 1                               # Per-chat_id command cap
 
 [nucleo]
 # Cognitive Trivium — enforced by the Santuario critic loop.

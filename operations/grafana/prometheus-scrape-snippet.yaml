@@ -1,0 +1,56 @@
+# =============================================================================
+# AETERNA v0.3.0 "Oculus" -- Prometheus scrape config snippet.
+# =============================================================================
+#
+# Drop the `scrape_configs` entries below under your existing prometheus.yml
+# `scrape_configs:` key. Reload Prometheus (SIGHUP or POST /-/reload) and the
+# `aeterna-overview.json` Grafana dashboard will populate immediately.
+#
+# Default ports match aeterna.toml [operations] prometheus_port (9477 for
+# Prometheus-1, 9478 for Prometheus-0). Adjust if you've shifted them in
+# your local config.
+#
+# scrape_interval = 15s mirrors the v0.3.0 War Room refresh budget. Going
+# below 5s is wasteful (the Sentinel rate-limits its metric dump to 5s) and
+# above 60s loses the resolution needed for the "30s peer drop" alert
+# pattern recommended in OPERATOR-RUNBOOK.md.
+#
+# scrape_timeout = 5s comfortably covers a healthy gRPC round-trip
+# (typical: <50ms) plus the exporter's own render overhead (<5ms). On a
+# loaded signer the GetMetrics RPC has been observed up to ~800ms when
+# the Custos sweep is mid-cycle, so this leaves headroom.
+# =============================================================================
+
+global:
+  scrape_interval:     15s   # see header note
+  scrape_timeout:      5s    # see header note
+  evaluation_interval: 15s
+
+scrape_configs:
+
+  # --- Prometheus-1 (default LAN node) -----------------------------------
+  - job_name: 'aeterna-prometheus-1'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['127.0.0.1:9477']
+        labels:
+          guardian:    'Prometheus-1'
+          environment: 'dev'
+
+  # --- Prometheus-0 (dev twin -- enable only if running dual-instance) ---
+  # Comment this whole block out if you're running a single node.
+  - job_name: 'aeterna-prometheus-0'
+    metrics_path: /metrics
+    static_configs:
+      - targets: ['127.0.0.1:9478']
+        labels:
+          guardian:    'Prometheus-0'
+          environment: 'dev'
+
+  # --- Federation note ---------------------------------------------------
+  # When you go from "two local nodes" to "Guardian fleet across the LAN"
+  # you'll typically swap static_configs for file_sd_configs or
+  # consul_sd_configs. The Grafana dashboard works unchanged: it filters
+  # by the `instance` label that Prometheus auto-applies, so the only
+  # downstream change is operator habit ("All" in $instance dropdown
+  # now means "the whole fleet").

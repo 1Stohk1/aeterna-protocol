@@ -1,0 +1,21 @@
+# AETERNA v0.3.0 "Oculus" — Telegram operator bot dependencies.
+#
+# The bot SHARES the typed Admin client with the War Room by importing
+# operations/war_room/client.py and the sibling admin_pb2*.py. That
+# means grpcio + protobuf pins here MUST stay compatible with
+# operations/war_room/requirements.txt — if they drift you'll get a
+# protobuf VersionError at runtime (gencode-vs-runtime mismatch).
+#
+# python-telegram-bot v21 is async-native and pins httpx for its HTTP
+# transport. Leave the [job-queue] extra off on purpose: we schedule
+# the alert poller manually via asyncio so the bot doesn't take an
+# APScheduler dependency it never uses.
+
+python-telegram-bot==21.6
+grpcio>=1.67.1,<2
+protobuf>=5.27,<6
+
+# tomli is only needed on Python < 3.11. On 3.11+ the stdlib ``tomllib``
+# is used and this line is a no-op. We keep it for older WSL images
+# that still ship Python 3.10 by default.
+tomli>=2.0.1 ; python_version < "3.11"

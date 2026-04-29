@@ -1,9 +1,16 @@
-//! santuarioctl — operator-side control CLI for the Santuario v0.2.0 signer.
+//! santuarioctl — operator-side control CLI for the Santuario signer.
 //!
-//! Sprint v0.2.0 "Custos" acceptance criterion #6:
+//! v0.2.0 "Custos" acceptance criterion #6:
 //!
 //! > Running `santuarioctl status` on a healthy node prints:
 //! > `vault=sealed seccomp=active critic=armed integrity=green signer=ready`.
+//!
+//! v0.3.0 "Oculus" extends the CLI with read-only observability:
+//!
+//!   metrics      — snapshot the Admin metrics registry (counters,
+//!                  gauges, p50/p90/p99 quantiles).
+//!   tail         — print the last N audit log records (raw JSONL).
+//!   peers        — snapshot the gossip peer view.
 //!
 //! This binary is a thin gRPC client against the santuario-signer process.
 //! It respects the same environment variables as the server:
@@ -18,6 +25,9 @@
 //!   audit        — trigger the α sweep now; optional `--accept` reseals.
 //!   resume       — present a Dilithium-5 signed challenge to clear
 //!                  a suspension. `--token <hex> --operator <label>`.
+//!   metrics      — pretty-print the Admin metrics snapshot.
+//!   tail         — print the last --limit (default 20) audit records.
+//!   peers        — print the current gossip peer view.
 
 use std::path::PathBuf;
 use std::time::Duration;
@@ -31,8 +41,15 @@ pub mod santuario {
             tonic::include_proto!("santuario.signer.v1");
         }
     }
+    pub mod admin {
+        pub mod v1 {
+            tonic::include_proto!("santuario.admin.v1");
+        }
+    }
 }
 
+use santuario::admin::v1::admin_client::AdminClient;
+use santuario::admin::v1::{GetMetricsRequest, ListPeersRequest, TailAuditLogRequest};
 use santuario::signer::v1::signer_client::SignerClient;
 use santuario::signer::v1::{GetStatusRequest, ResumeRequest, TriggerAuditRequest};
 
@@ -40,7 +57,7 @@ use santuario::signer::v1::{GetStatusRequest, ResumeRequest, TriggerAuditRequest
 #[command(
     name = "santuarioctl",
     version,
-    about = "Operator control plane for santuario-signer v0.2.0 (Custos)",
+    about = "Operator control plane for santuario-signer (Custos + Oculus)",
     long_about = None
 )]
 struct Cli {
@@ -76,13 +93,28 @@ enum Cmd {
         #[arg(long, default_value = "operator")]
         operator: String,
     },
+    /// v0.3.0 — snapshot the Admin metrics registry.
+    Metrics,
+    /// v0.3.0 — print the last N audit log records (raw JSONL).
+    Tail {
+        /// Number of records from the tail (server-capped at 1000).
+        #[arg(long, default_value_t = 20)]
+        limit: u32,
+        /// If set, print only the raw JSON lines (suitable for
+        /// piping into `jq`); otherwise print a human-readable header.
+        #[arg(long)]
+        raw: bool,
+    },
+    /// v0.3.0 — snapshot the gossip peer view.
+    Peers,
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
     let channel = connect(&cli).await?;
-    let mut client = SignerClient::new(channel);
+    let mut client = SignerClient::new(channel.clone());
+    let mut admin = AdminClient::new(channel);
 
     match cli.cmd {
         Cmd::Status => {
@@ -155,6 +187,82 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             } else {
                 eprintln!("resumed=false error={}", resp.error);
                 std::process::exit(3);
+            }
+        }
+        Cmd::Metrics => {
+            let resp = admin.get_metrics(GetMetricsRequest {}).await?.into_inner();
+            println!(
+                "node={} ts_utc={} schema={} window={}s",
+                resp.node_id, resp.ts_utc, resp.schema_version, resp.metric_window_seconds
+            );
+
+            let mut counters: Vec<_> = resp.counters.into_iter().collect();
+            counters.sort_by(|a, b| a.0.cmp(&b.0));
+            if !counters.is_empty() {
+                println!("counters:");
+                for (k, v) in &counters {
+                    println!("  {k:40} {v}");
+                }
+            }
+
+            let mut gauges: Vec<_> = resp.gauges.into_iter().collect();
+            gauges.sort_by(|a, b| a.0.cmp(&b.0));
+            if !gauges.is_empty() {
+                println!("gauges:");
+                for (k, v) in &gauges {
+                    println!("  {k:40} {v}");
+                }
+            }
+
+            let mut quantiles: Vec<_> = resp.quantiles.into_iter().collect();
+            quantiles.sort_by(|a, b| a.0.cmp(&b.0));
+            if !quantiles.is_empty() {
+                println!("quantiles (p50 / p90 / p99):");
+                for (k, q) in &quantiles {
+                    println!("  {k:40} {:.6} {:.6} {:.6}", q.p50, q.p90, q.p99);
+                }
+            }
+        }
+        Cmd::Tail { limit, raw } => {
+            let resp = admin
+                .tail_audit_log(TailAuditLogRequest { limit })
+                .await?
+                .into_inner();
+            if !raw {
+                println!("# {} record(s)", resp.lines.len());
+            }
+            for line in &resp.lines {
+                if raw {
+                    println!("{}", line.json);
+                } else {
+                    println!("[{}] {} {}", line.ts_utc, line.record, line.json);
+                }
+            }
+        }
+        Cmd::Peers => {
+            let resp = admin.list_peers(ListPeersRequest {}).await?.into_inner();
+            println!(
+                "# {} peer(s) snapshot_utc={}",
+                resp.peers.len(),
+                resp.snapshot_utc
+            );
+            for p in &resp.peers {
+                let freshness = if p.last_seen_utc == 0 {
+                    "never".to_string()
+                } else {
+                    let age = resp.snapshot_utc.saturating_sub(p.last_seen_utc);
+                    format!("{}s ago", age)
+                };
+                let node = if p.node_id.is_empty() {
+                    "?"
+                } else {
+                    p.node_id.as_str()
+                };
+                let bs = if p.is_bootstrap { " [bootstrap]" } else { "" };
+                println!(
+                    "  {:30} node={:20} last_seen={} rx={} tx={}{}",
+                    p.address, node, freshness, p.rx_count, p.tx_count, bs
+                );
             }
         }
     }

@@ -47,6 +47,7 @@ except ModuleNotFoundError:  # pragma: no cover
 import zmq
 
 from core.gossip import AeternaGossipNet
+from core.metrics_contributor import MetricsContributor
 from core.nat_udp import RendezvousHint, parse_rendezvous_hints
 from core.poc import (
     build_poc_verdict,
@@ -167,6 +168,14 @@ class Sentinel:
         self._trust_scores = TrustScoreBook()
         self._package_manifest_hash = self._hash_python_manifest()
 
+        # v0.3.0 "Oculus" — feeds the Admin service's GetMetrics/ListPeers.
+        # The Admin reads both snapshot files atomically; missing files
+        # are treated as empty, so this is best-effort even on first boot.
+        self._metrics = MetricsContributor(repo_root=Path(__file__).parent.parent)
+        self._bootstrap_addrs: set[str] = {
+            f"udp://{h}:{p}" for (h, p) in self.cfg.bootstrap_peers
+        }
+
     # ------------------------------------------------------------------
     # Boot sequence — Axiom I, II, III
     # ------------------------------------------------------------------
@@ -277,13 +286,33 @@ class Sentinel:
             if now - self._last_announce_ts > 30.0:
                 self._broadcast_announce()
                 self._last_announce_ts = now
+                self._metrics.incr("aeterna_peer_announce_tx_total")
 
             self._process_next_poc_validation()
+
+            # v0.3.0 — dump metrics + peers snapshot for the Admin RPCs.
+            # Rate-limited internally (5 s floor); cheap to call every tick.
+            self._metrics.set_gauge(
+                "aeterna_task_queue_depth", float(len(self._task_queue))
+            )
+            self._metrics.set_gauge(
+                "aeterna_poc_queue_depth", float(len(self._poc_queue))
+            )
+            self._metrics.set_gauge(
+                "aeterna_last_announce_age_seconds",
+                float(now - self._last_announce_ts),
+            )
+            peer_table = self._gossip.peer_table if self._gossip else None
+            self._metrics.maybe_dump(
+                peer_table=peer_table,
+                bootstrap_addrs=self._bootstrap_addrs,
+            )
 
             task = self.harvest_task()
             if task is None:
                 time.sleep(1.0)
                 continue
+            self._metrics.incr("aeterna_task_harvested_total")
 
             try:
                 result = self.dispatch_task(task)
@@ -301,6 +330,7 @@ class Sentinel:
             assert self._gossip is not None
             mid = self._gossip.gossip({"kind": "agp_block", "payload": payload})
             LOG.info("block broadcast mid=%s pow=%s…", mid[:12], block_hash[:12])
+            self._metrics.incr("aeterna_block_tx_total")
 
     def _sign_block(self, payload: dict[str, Any]) -> None:
         if self._santuario is None:
@@ -478,6 +508,10 @@ class Sentinel:
     def _on_gossip(self, message: dict[str, Any]) -> None:
         peer_addr = message.pop("__peer_addr__", None)
         kind = message.get("kind")
+        # v0.3.0 — every inbound gossip frame counts, partitioned by kind.
+        self._metrics.incr("aeterna_gossip_rx_total")
+        if kind:
+            self._metrics.incr(f"aeterna_gossip_rx_{kind}_total")
         if kind == "task_offer":
             self._task_queue.append(message["task"])
         elif kind == "peer_announce":

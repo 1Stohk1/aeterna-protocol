@@ -1,18 +1,31 @@
-//! santuario-signer — v0.2.0 "Custos" gRPC server.
+//! santuario-signer — v0.3.0 "Oculus" gRPC server.
 //!
-//! Every `Sign` request now runs through a five-gate pipeline before a
-//! Dilithium-5 signature is emitted:
+//! Two services share one listener:
 //!
-//!     1. Vault unsealed?             (vault::Vault::is_sealed == false)
-//!     2. Signer state == Ready?      (integrity::SignerState::is_ready)
-//!     3. Block parses as AGP-v1?     (critic::parse_block)
-//!     4. Producer PID attested?      (isolation::Launcher::attest)
-//!     5. Critic accepts block?       (critic::DefaultCritic::check)
+//!   * `Signer` (v0.2.0 "Custos") — the write path. Every `Sign`
+//!     request runs through a five-gate pipeline before a Dilithium-5
+//!     signature is emitted:
 //!
-//! If any gate refuses, the signer answers with the corresponding gRPC
-//! status code and does NOT emit a signature. The signer keeps sliding
-//! windows for α, β, γ thresholds and self-suspends on trip; recovery
-//! requires an operator-signed token per `recovery.rs`.
+//!       1. Vault unsealed?             (vault::Vault::is_sealed == false)
+//!       2. Signer state == Ready?      (integrity::SignerState::is_ready)
+//!       3. Block parses as AGP-v1?     (critic::parse_block)
+//!       4. Producer PID attested?      (isolation::Launcher::attest)
+//!       5. Critic accepts block?       (critic::DefaultCritic::check)
+//!
+//!     If any gate refuses, the signer answers with the corresponding
+//!     gRPC status code and does NOT emit a signature. The signer
+//!     keeps sliding windows for α, β, γ thresholds and self-suspends
+//!     on trip; recovery requires an operator-signed token per
+//!     `recovery.rs`.
+//!
+//!   * `Admin` (v0.3.0 "Oculus") — the read path. `GetMetrics`,
+//!     `TailAuditLog`, and `ListPeers` are callable from ANY signer
+//!     verdict, including suspended and degraded. Observability must
+//!     not depend on the sign path's health. See `admin.rs`.
+//!
+//! Every Sign outcome is also reflected in the metrics registry so
+//! `GetMetrics` and the Prometheus exporter (Phase D) have something
+//! real to show.
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -22,28 +35,22 @@ use pqcrypto_dilithium::dilithium5;
 use pqcrypto_traits::sign::{DetachedSignature, PublicKey as _};
 use tonic::{transport::Server, Request, Response, Status};
 
-pub mod santuario {
-    pub mod signer {
-        pub mod v1 {
-            tonic::include_proto!("santuario.signer.v1");
-        }
-    }
-}
-
-use santuario::signer::v1::signer_server::{Signer, SignerServer};
-use santuario::signer::v1::{
+// All internals live in the library (src/lib.rs) so integration tests
+// in tests/ can construct them directly. The binary just wires them up.
+use santuario_signer::santuario::signer::v1::signer_server::{Signer, SignerServer};
+use santuario_signer::santuario::signer::v1::{
     GetPublicKeyRequest, GetPublicKeyResponse, GetStatusRequest, GetStatusResponse, ResumeRequest,
     ResumeResponse, SignRequest, SignResponse, TriggerAuditRequest, TriggerAuditResponse,
     VerifyRequest, VerifyResponse,
 };
 
-mod attestation;
-mod keystore;
-mod recovery;
-
-use attestation::{AttestationError, AttestationGate};
-use keystore::KeyStore;
-use recovery::RecoveryContext;
+use santuario_signer::admin::{self, AdminService};
+use santuario_signer::attestation::{AttestationError, AttestationGate};
+use santuario_signer::keystore::KeyStore;
+use santuario_signer::metrics::MetricsRegistry;
+use santuario_signer::peers::PeerSnapshotReader;
+use santuario_signer::recovery::{self, RecoveryContext};
+use santuario_signer::sentinel_metrics::SentinelMetricsReader;
 
 use santuario_critic::{parse_block, Critic, DefaultCritic, Violation};
 use santuario_integrity::{AuditLog, IntegrityAuditor, IntegrityConfig, SignerState};
@@ -59,6 +66,10 @@ pub struct SantuarioSigner {
     audit_log: AuditLog,
     recovery: RecoveryContext,
     vault_sealed: Arc<std::sync::atomic::AtomicBool>,
+    /// v0.3.0 — every sign path increments counters and observes
+    /// latency here so the Admin service's `GetMetrics` has something
+    /// real to show.
+    metrics: Arc<MetricsRegistry>,
 }
 
 impl SantuarioSigner {
@@ -70,6 +81,63 @@ impl SantuarioSigner {
 #[tonic::async_trait]
 impl Signer for SantuarioSigner {
     async fn sign(&self, request: Request<SignRequest>) -> Result<Response<SignResponse>, Status> {
+        let start = std::time::Instant::now();
+        self.metrics.incr("santuario_sign_total");
+        let res = self.sign_inner(request).await;
+        self.metrics
+            .observe_duration("santuario_sign_latency_seconds", start.elapsed());
+        match &res {
+            Ok(_) => self.metrics.incr("santuario_sign_accept_total"),
+            Err(s) => {
+                let bucket = classify_reject(s);
+                self.metrics
+                    .incr(&format!("santuario_sign_reject_{bucket}_total"));
+            }
+        }
+        res
+    }
+
+    async fn verify(
+        &self,
+        request: Request<VerifyRequest>,
+    ) -> Result<Response<VerifyResponse>, Status> {
+        self.verify_inner(request).await
+    }
+
+    async fn get_public_key(
+        &self,
+        request: Request<GetPublicKeyRequest>,
+    ) -> Result<Response<GetPublicKeyResponse>, Status> {
+        self.get_public_key_inner(request).await
+    }
+
+    async fn get_status(
+        &self,
+        request: Request<GetStatusRequest>,
+    ) -> Result<Response<GetStatusResponse>, Status> {
+        self.get_status_inner(request).await
+    }
+
+    async fn trigger_audit(
+        &self,
+        request: Request<TriggerAuditRequest>,
+    ) -> Result<Response<TriggerAuditResponse>, Status> {
+        self.trigger_audit_inner(request).await
+    }
+
+    async fn resume(
+        &self,
+        request: Request<ResumeRequest>,
+    ) -> Result<Response<ResumeResponse>, Status> {
+        self.resume_inner(request).await
+    }
+}
+
+impl SantuarioSigner {
+    async fn sign_inner(
+        &self,
+        request: Request<SignRequest>,
+    ) -> Result<Response<SignResponse>, Status> {
         let req = request.into_inner();
 
         // Gate 1: vault must be unsealed.
@@ -143,7 +211,7 @@ impl Signer for SantuarioSigner {
         }))
     }
 
-    async fn verify(
+    async fn verify_inner(
         &self,
         request: Request<VerifyRequest>,
     ) -> Result<Response<VerifyResponse>, Status> {
@@ -158,7 +226,7 @@ impl Signer for SantuarioSigner {
         Ok(Response::new(VerifyResponse { valid }))
     }
 
-    async fn get_public_key(
+    async fn get_public_key_inner(
         &self,
         _request: Request<GetPublicKeyRequest>,
     ) -> Result<Response<GetPublicKeyResponse>, Status> {
@@ -167,7 +235,7 @@ impl Signer for SantuarioSigner {
         }))
     }
 
-    async fn get_status(
+    async fn get_status_inner(
         &self,
         _request: Request<GetStatusRequest>,
     ) -> Result<Response<GetStatusResponse>, Status> {
@@ -199,7 +267,7 @@ impl Signer for SantuarioSigner {
         }))
     }
 
-    async fn trigger_audit(
+    async fn trigger_audit_inner(
         &self,
         request: Request<TriggerAuditRequest>,
     ) -> Result<Response<TriggerAuditResponse>, Status> {
@@ -244,7 +312,7 @@ impl Signer for SantuarioSigner {
         }))
     }
 
-    async fn resume(
+    async fn resume_inner(
         &self,
         request: Request<ResumeRequest>,
     ) -> Result<Response<ResumeResponse>, Status> {
@@ -297,6 +365,38 @@ fn policy_from_str(s: &str) -> Option<PolicyKind> {
         "llm_inference" | "llm-inference" => Some(PolicyKind::LlmInference),
         "restricted" | "restricted-compute" => Some(PolicyKind::Restricted),
         _ => None,
+    }
+}
+
+/// Map a rejected-sign `Status` into the counter bucket name suffix
+/// expected by the Admin metrics schema. Kept in sync with the error
+/// table in signer.proto §Errors and with the SPRINT-v0.3.0 metrics
+/// contract (Phase A, §7.2).
+fn classify_reject(s: &Status) -> &'static str {
+    use tonic::Code;
+    let msg = s.message();
+    match s.code() {
+        Code::FailedPrecondition => {
+            if msg.contains("vault sealed") {
+                "vault_sealed"
+            } else {
+                "suspended"
+            }
+        }
+        Code::InvalidArgument => "malformed",
+        Code::PermissionDenied => "attestation",
+        Code::Aborted => {
+            if msg.contains("reflexive") {
+                "reflexive"
+            } else if msg.contains("symbolic") {
+                "symbolic"
+            } else if msg.contains("axiomatic") {
+                "axiomatic"
+            } else {
+                "aborted_other"
+            }
+        }
+        _ => "other",
     }
 }
 
@@ -435,25 +535,66 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let gate = AttestationGate::new(launcher.clone());
 
+    // --- v0.3.0 "Oculus" observability --------------------------------------
+    // One shared metrics registry feeds the Admin `GetMetrics` RPC and is
+    // incremented on every Sign outcome.
+    let metrics = Arc::new(MetricsRegistry::default());
+
+    // Gauge housekeeper — refreshes `santuario_*_state` gauges every 5s.
+    {
+        let metrics = metrics.clone();
+        let state = state.clone();
+        let vault_sealed = vault_sealed.clone();
+        tokio::spawn(async move {
+            let mut ticker = tokio::time::interval(Duration::from_secs(5));
+            loop {
+                ticker.tick().await;
+                let sealed = if vault_sealed.load(std::sync::atomic::Ordering::Relaxed) {
+                    1.0
+                } else {
+                    0.0
+                };
+                let ready = if state.is_ready() { 1.0 } else { 0.0 };
+                metrics.set_gauge("santuario_vault_sealed", sealed);
+                metrics.set_gauge("santuario_signer_ready", ready);
+            }
+        });
+    }
+
     let signer_service = SantuarioSigner {
         keystore,
         state,
         critic: DefaultCritic::new(),
         gate,
         auditor,
-        audit_log,
+        audit_log: audit_log.clone(),
         recovery: recovery_ctx,
         vault_sealed,
+        metrics: metrics.clone(),
     };
 
-    let server = Server::builder().add_service(SignerServer::new(signer_service));
+    // Admin service — same listener as Signer; see SPRINT-v0.3.0 §7.1.
+    let admin_service = AdminService {
+        node_id: node_id.clone(),
+        metrics: metrics.clone(),
+        audit_log: audit_log.clone(),
+        peers: PeerSnapshotReader::default_for_repo(&repo),
+        sentinel_metrics: SentinelMetricsReader::default_for_repo(&repo),
+    };
+
+    let server = Server::builder()
+        .add_service(SignerServer::new(signer_service))
+        .add_service(admin::server(admin_service));
 
     #[cfg(unix)]
     {
         if let Ok(port) = std::env::var("SANTUARIO_PORT") {
             let addr_str = format!("127.0.0.1:{}", port);
             let addr = addr_str.parse()?;
-            log::info!("Santuario Signer v0.2.0 starting on TCP {}", addr);
+            log::info!(
+                "Santuario Signer v0.3.0 (Signer+Admin) starting on TCP {}",
+                addr
+            );
             server.serve(addr).await?;
             return Ok(());
         }
@@ -474,7 +615,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         std::fs::set_permissions(&socket_path, perms)?;
 
         log::info!(
-            "Santuario Signer v0.2.0 starting on UDS {}",
+            "Santuario Signer v0.3.0 (Signer+Admin) starting on UDS {}",
             socket_path.display()
         );
         server.serve_with_incoming(uds_stream).await?;
@@ -485,7 +626,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         let port = std::env::var("SANTUARIO_PORT").unwrap_or_else(|_| "50051".to_string());
         let addr_str = format!("127.0.0.1:{}", port);
         let addr = addr_str.parse()?;
-        log::info!("Santuario Signer v0.2.0 starting on TCP {}", addr);
+        log::info!(
+            "Santuario Signer v0.3.0 (Signer+Admin) starting on TCP {}",
+            addr
+        );
         server.serve(addr).await?;
     }
 

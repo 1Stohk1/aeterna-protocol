@@ -1,0 +1,134 @@
+syntax = "proto3";
+package santuario.admin.v1;
+
+// v0.3.0 "Oculus": read-only observability surface for the operator.
+//
+// The `Admin` service is strictly an observer — it never unseals the
+// vault, never mutates signer state, never emits a Dilithium-5
+// signature. It is mounted on the *same* listener as the `Signer`
+// service (UDS on unix, loopback TCP on Windows via $SANTUARIO_PORT)
+// through `Server::builder().add_service(signer).add_service(admin)`.
+//
+// The three RPCs are the minimum substrate the War Room dashboard, the
+// Telegram bot, and the Prometheus exporter all build on top of:
+//
+//   GetMetrics    -> numerical signal: counters + gauges + p-quantiles.
+//                    Powers both the exporter's /metrics endpoint and
+//                    the War Room's "live numbers" panel.
+//   TailAuditLog  -> last N records from the append-only audit log.
+//                    Powers the War Room audit panel and the bot's
+//                    `/tail` command.
+//   ListPeers     -> current gossip view (addresses, last-seen, rx/tx
+//                    counters). Powers the War Room peer panel and
+//                    the bot's `/peers` command.
+//
+// All three are callable from *any* signer state — ready, suspended,
+// or degraded. Observability MUST NOT depend on the signing path's
+// health; that would make a sick node invisible to its operator.
+
+service Admin {
+    // Pull every exposed metric in a single round-trip. Stable shape:
+    // adding a metric bumps `schema_version` and clients MUST tolerate
+    // unknown keys.
+    rpc GetMetrics (GetMetricsRequest) returns (GetMetricsResponse);
+
+    // Fetch the most recent `limit` records from the audit log. The
+    // server caps `limit` at 1000 regardless of what the client asks
+    // for. Returns in on-disk order (oldest-first within the window).
+    rpc TailAuditLog (TailAuditLogRequest) returns (TailAuditLogResponse);
+
+    // Snapshot the gossip peer table. The server does NOT poke peers
+    // during this call; it only reports what the Sentinel already
+    // knows.
+    rpc ListPeers (ListPeersRequest) returns (ListPeersResponse);
+}
+
+// --- GetMetrics -------------------------------------------------------------
+
+message GetMetricsRequest {}
+
+message GetMetricsResponse {
+    // Bumped whenever a new counter/gauge/quantile is added. Clients
+    // built against an older schema must still function (they simply
+    // won't render the new entries).
+    uint32 schema_version = 1;
+
+    // Node identity, copied from aeterna.toml [identity].guardian_id.
+    string node_id = 2;
+
+    // UTC seconds at which the server built this snapshot.
+    int64 ts_utc = 3;
+
+    // Monotonically-increasing counters. Keys live in a stable
+    // namespace — `santuario_*` for Rust-side signals, `aeterna_*`
+    // for Sentinel-side signals.
+    map<string, uint64> counters = 4;
+
+    // Instantaneous gauges. Same namespace convention as `counters`.
+    map<string, double> gauges = 5;
+
+    // Latency quantiles, seconds. Key = metric, value = [p50, p90,
+    // p99]. Quantiles are sampled over the last metric_window_seconds.
+    map<string, Quantiles> quantiles = 6;
+
+    // Size of the sliding window feeding `quantiles`.
+    uint32 metric_window_seconds = 7;
+}
+
+message Quantiles {
+    double p50 = 1;
+    double p90 = 2;
+    double p99 = 3;
+}
+
+// --- TailAuditLog -----------------------------------------------------------
+
+message TailAuditLogRequest {
+    // How many records back from the tail. Server caps at 1000.
+    // Zero or unset defaults to 20.
+    uint32 limit = 1;
+}
+
+message TailAuditLogResponse {
+    repeated AuditLogLine lines = 1;
+}
+
+message AuditLogLine {
+    // UTC seconds pulled from the record's `ts_utc` field.
+    int64 ts_utc = 1;
+    // The `record` discriminator from the JSONL line — one of
+    // `alert`, `signer_suspend`, `signer_resume`, `baseline_sealed`.
+    string record = 2;
+    // The raw canonical JSON string exactly as persisted on disk.
+    // Clients that want typed access parse it themselves; the server
+    // does not re-shape it. This preserves the forensic property that
+    // what the War Room displays is byte-identical to what landed in
+    // the log.
+    string json = 3;
+}
+
+// --- ListPeers --------------------------------------------------------------
+
+message ListPeersRequest {}
+
+message ListPeersResponse {
+    repeated Peer peers = 1;
+    // UTC seconds at snapshot time — all `last_seen_utc` values are
+    // relative to this for "freshness" rendering.
+    int64 snapshot_utc = 2;
+}
+
+message Peer {
+    // `udp://host:port` format, as emitted by the gossip subsystem.
+    string address = 1;
+    // Remote guardian_id if the peer has identified itself, else "".
+    string node_id = 2;
+    // UTC seconds of the last packet received from this peer. 0 means
+    // "never" (discovered via bootstrap but no traffic yet).
+    int64 last_seen_utc = 3;
+    // Packets received / transmitted since sentinel start.
+    uint64 rx_count = 4;
+    uint64 tx_count = 5;
+    // True iff the peer is in the current bootstrap_peers list.
+    bool is_bootstrap = 6;
+}

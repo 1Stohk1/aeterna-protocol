@@ -246,6 +246,16 @@ Five micro-questions gate Phase A. Decide now, log here, don't re-open.
    minimal (the Santuario refuses every non-`Signer` method on the
    same descriptor), and lets operations evolve without touching the
    signer's proto file. Cost: a second `tonic::include_proto!` line.
+   **Cross-platform transport note.** The new `Admin` service is
+   mounted on the *same transport* as `Signer` via
+   `Server::builder().add_service(signer).add_service(admin)` — a
+   single listener, two service descriptors. On Linux/macOS that
+   listener is the existing UDS at `/run/aeterna/santuario.sock`; on
+   Windows (and any `#[cfg(not(unix))]` target) it falls back to
+   loopback TCP on `$SANTUARIO_PORT` (default `50051`). This preserves
+   the dev-time ergonomics the v0.2.0 `santuarioctl` already relies on
+   and lets `santuario-admin-client` reuse the exact same `connect`
+   helper that `santuarioctl` already ships.
 
 2. **War Room framework.** Streamlit, Gradio, plain Flask+HTMX, or a
    React SPA?
@@ -277,6 +287,15 @@ Five micro-questions gate Phase A. Decide now, log here, don't re-open.
    *Proposal:* **DMs only.** A group with multiple members is an
    ambient leak of audit-log fragments. Operators who genuinely need
    shared visibility can rotate one chat-id between two phones.
+
+6. **Metrics registry residence.** Standalone `santuario-metrics`
+   crate, or an internal `signer/src/metrics.rs` module?
+   *Proposal:* **internal module.** Ratified by the Master Node —
+   the metrics registry is signer-local state, not a cross-crate
+   dependency; shipping it as a separate crate buys zero reuse at
+   this sprint scope and adds one more `Cargo.toml` to the audit
+   surface. When a second consumer appears (the Sentinel's `aeterna_*`
+   metrics) we will extract the shared traits, not before.
 
 If Christian disagrees with any of these, say so before Phase A
 starts. Otherwise they're locked at Phase A kickoff.
