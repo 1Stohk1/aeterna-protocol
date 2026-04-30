@@ -1,0 +1,52 @@
+[package]
+name        = "santuario-cipher"
+description = "Sigillum (v0.4.0) authenticated-encryption layer for the audit log and the gossip channel. ChaCha20-Poly1305 + HKDF-SHA256 + segment manager with hard nonce-reuse guards."
+version.workspace      = true
+edition.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[dependencies]
+# AEAD primitive. The `std` feature gives us Vec<u8> support and the io-friendly
+# error types; we are NOT in #![no_std] territory.
+chacha20poly1305 = { workspace = true }
+
+# Key derivation. HKDF-SHA256 covers both segment subkeys (Phase A) and gossip
+# session keys (Phase B). Phase C ratchet uses the same primitive.
+hkdf             = { workspace = true }
+sha2             = { workspace = true }
+
+# Memory hygiene. `zeroize_derive` lets MasterLogKey / SubKey wipe themselves
+# on drop. CRITICAL for a crate whose entire purpose is keeping bytes secret.
+zeroize          = { workspace = true }
+
+# Serialization. We need a stable wire layout for the segment header and the
+# magic-byte sentinel. serde_bytes for fixed-size byte arrays.
+serde            = { workspace = true }
+serde_bytes      = { workspace = true }
+
+# Errors. thiserror for typed errors that callers (santuario-integrity,
+# santuario-signer admin layer) can pattern-match on.
+thiserror        = { workspace = true }
+
+# Optional helpers reused across the workspace.
+hex              = { workspace = true }
+
+# RNG for nonce_prefix randomization at master-key install time. The per-record
+# nonce is deterministic (counter-based), but the prefix is randomized to avoid
+# any cross-segment nonce collision risk.
+rand             = { workspace = true }
+rand_core        = { workspace = true }
+
+[dev-dependencies]
+tempfile         = { workspace = true }
+# Property-based testing of the segment writer's nonce uniqueness invariant.
+# This is the most safety-critical assertion in the entire Sigillum surface:
+# a single nonce reuse with the same key catastrophically breaks ChaCha20.
+proptest         = "1"
+
+[lib]
+name = "santuario_cipher"
+path = "src/lib.rs"

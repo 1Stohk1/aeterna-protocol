@@ -52,6 +52,7 @@ use santuario_signer::peers::PeerSnapshotReader;
 use santuario_signer::recovery::{self, RecoveryContext};
 use santuario_signer::sentinel_metrics::SentinelMetricsReader;
 
+use santuario_cipher::MasterLogKey;
 use santuario_critic::{parse_block, Critic, DefaultCritic, Violation};
 use santuario_integrity::{AuditLog, IntegrityAuditor, IntegrityConfig, SignerState};
 use santuario_isolation::{Launcher, PolicyKind};
@@ -444,7 +445,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // --- integrity watchdog ------------------------------------------------
     let node_id = std::env::var("AETERNA_NODE_ID").unwrap_or_else(|_| "Prometheus-1".to_string());
     let auditor = Arc::new(IntegrityAuditor::new(node_id.clone(), &repo, cfg.clone()));
-    let audit_log = AuditLog::default_for_repo(&repo);
+    // v0.4 "Sigillum": provision the audit-log master key. First boot
+    // generates a fresh 32-byte random key under <repo>/santuario/vault/
+    // and persists it (chmod 0o600 on Unix). Subsequent boots load the
+    // same key. Phase C will replace this random-on-first-boot path
+    // with BIP-39 seed derivation; the file location stays stable.
+    let log_master_key_path = repo.join("santuario/vault/log_master.key");
+    let log_master = MasterLogKey::load_or_generate(&log_master_key_path)
+        .map_err(|e| anyhow::anyhow!("provision audit master key at {}: {e}",
+                                     log_master_key_path.display()))?;
+    log::info!(
+        "audit log master key id: {} ({})",
+        log_master.id().to_hex(),
+        log_master_key_path.display()
+    );
+    let audit_log = AuditLog::default_for_repo(&repo, log_master)
+        .map_err(|e| anyhow::anyhow!("open encrypted audit log: {e}"))?;
     let recovery_ctx = RecoveryContext::new_under(&repo, audit_log.clone());
 
     // --- launcher ----------------------------------------------------------

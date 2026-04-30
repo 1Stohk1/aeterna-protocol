@@ -30,7 +30,7 @@ pub mod state;
 
 pub use audit::{FileDigest, IntegrityAuditor};
 pub use config::IntegrityConfig;
-pub use log::AuditLog;
+pub use log::{AuditLog, AuditRecord};
 pub use state::{SignerState, Verdict};
 
 /// Kinds of degraded-mode trigger. Maps 1:1 to the Greek-letter
@@ -123,6 +123,13 @@ pub enum IntegrityError {
     LogClosed,
     #[error("unknown file key '{0}' in integrity sweep")]
     UnknownKey(String),
+    /// Sigillum (v0.4) audit-log encryption surface error. Wraps any
+    /// failure from santuario-cipher: missing magic, wrong master key,
+    /// authentication failure, segment truncation. The integrity loop
+    /// treats every variant the same way (halt + alert), so we don't
+    /// re-explode the inner enum here.
+    #[error("audit cipher: {0}")]
+    Cipher(#[from] santuario_cipher::Error),
 }
 
 impl From<toml::de::Error> for IntegrityError {

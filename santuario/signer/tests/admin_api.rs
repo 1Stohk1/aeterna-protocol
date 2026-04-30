@@ -43,7 +43,10 @@ use santuario_signer::sentinel_metrics::SentinelMetricsReader;
 struct Harness {
     _tmp: tempfile::TempDir,
     addr: SocketAddr,
-    audit_log_path: std::path::PathBuf,
+    // v0.4: the on-disk audit dir is intentionally not exposed here --
+    // tests that need to inspect log content go through
+    // `audit_log.tail()` because the raw bytes are ChaCha20 ciphertext
+    // and unreadable without the (ephemeral) master key.
     sentinel_metrics_path: std::path::PathBuf,
     peers_path: std::path::PathBuf,
     metrics: Arc<MetricsRegistry>,
@@ -55,12 +58,13 @@ impl Harness {
         let tmp = tempfile::tempdir().expect("tempdir");
         let dir = tmp.path().to_path_buf();
 
-        let audit_log_path = dir.join("audit.jsonl");
+        let audit_log_dir = dir.join("audit");
         let sentinel_metrics_path = dir.join("sentinel_metrics.json");
         let peers_path = dir.join("peers.json");
 
         let metrics = Arc::new(MetricsRegistry::default());
-        let audit_log = AuditLog::new(audit_log_path.clone());
+        // v0.4 Sigillum: ephemeral master key per integration-test run.
+        let audit_log = AuditLog::ephemeral(audit_log_dir.clone()).expect("ephemeral audit log");
 
         let svc = AdminService {
             node_id: "Prometheus-test".to_string(),
@@ -92,7 +96,6 @@ impl Harness {
         Self {
             _tmp: tmp,
             addr,
-            audit_log_path,
             sentinel_metrics_path,
             peers_path,
             metrics,
@@ -223,10 +226,18 @@ async fn tail_audit_log_returns_byte_identical_json_over_the_wire() {
         h.audit_log.log_alert(&alert).expect("log alert");
     }
 
-    // Snapshot what's on disk BEFORE dialing — this is the ground truth.
-    let raw = std::fs::read_to_string(&h.audit_log_path).expect("read audit log");
-    let on_disk_lines: Vec<&str> = raw.lines().filter(|l| !l.trim().is_empty()).collect();
-    assert_eq!(on_disk_lines.len(), 3);
+    // Sigillum-aware ground truth: read back via the encrypted segment
+    // manager and canonical-serialize. The on-disk bytes are now
+    // ChaCha20 ciphertext, so the v0.3 "raw lines from the file" path
+    // is gone -- we anchor instead on "canonical re-serialization of
+    // the round-tripped record", which is the actual Assioma II
+    // contract the auditor cares about.
+    let records = h.audit_log.tail(usize::MAX).expect("tail audit log");
+    let expected_lines: Vec<String> = records
+        .iter()
+        .map(|r| serde_json::to_string(r).expect("canonical serialize"))
+        .collect();
+    assert_eq!(expected_lines.len(), 3);
 
     let mut client = h.client().await;
     let resp = client
@@ -236,11 +247,12 @@ async fn tail_audit_log_returns_byte_identical_json_over_the_wire() {
         .into_inner();
     assert_eq!(resp.lines.len(), 3);
 
-    // Byte-identical check — each `.json` field matches the on-disk line
-    // EXACTLY, including whitespace and field order. If the server ever
-    // round-trips through `serde_json::to_string` this test will fail.
-    for (got, expected_raw) in resp.lines.iter().zip(on_disk_lines.iter()) {
-        assert_eq!(got.json, *expected_raw, "JSON bytes must match on-disk");
+    // Byte-identical check -- the wire JSON must equal canonical
+    // serialization of the round-tripped record. If a future patch
+    // introduces a mid-pipeline mutation (e.g., re-pretty-print, key
+    // reordering), this test surfaces it as a forensic-integrity bug.
+    for (got, expected) in resp.lines.iter().zip(expected_lines.iter()) {
+        assert_eq!(&got.json, expected, "JSON bytes must match canonical");
         assert_eq!(got.record, "alert");
         assert!(got.ts_utc >= 1_713_542_400);
     }

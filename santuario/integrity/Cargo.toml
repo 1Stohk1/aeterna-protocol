@@ -9,6 +9,12 @@ repository.workspace   = true
 rust-version.workspace = true
 
 [dependencies]
+# v0.4 "Sigillum": audit log encryption layer. The integrity crate
+# writes through santuario-cipher's segment manager, persistence is
+# now per-10-MiB encrypted segments instead of a single plaintext
+# JSONL file.
+santuario-cipher = { path = "../cipher" }
+
 serde       = { workspace = true }
 serde_json  = { workspace = true }
 sha2        = { workspace = true }

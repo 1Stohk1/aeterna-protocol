@@ -166,7 +166,8 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().to_path_buf();
         std::fs::create_dir_all(root.join("santuario/integrity")).unwrap();
-        let audit = AuditLog::new(root.join("santuario/integrity/audit.log.jsonl"));
+        let audit = AuditLog::ephemeral(root.join("santuario/integrity/audit"))
+            .expect("ephemeral audit log");
         let ctx = RecoveryContext::new_under(&root, audit);
         let (pk, sk) = dilithium5::keypair();
         std::fs::write(&ctx.operator_pubkey_path, pk.as_bytes()).unwrap();
@@ -200,7 +201,7 @@ mod tests {
     #[test]
     fn ready_signer_has_no_outstanding_challenge() {
         let dir = tempfile::tempdir().unwrap();
-        let audit = AuditLog::new(dir.path().join("x.jsonl"));
+        let audit = AuditLog::ephemeral(dir.path().join("audit")).expect("ephemeral audit");
         let ctx = RecoveryContext::new_under(dir.path(), audit);
         let state = SignerState::new();
         let r = try_resume(&ctx, &state, "00", "op");
