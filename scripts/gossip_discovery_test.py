@@ -11,6 +11,8 @@ from typing import Any
 sys.path.append(str(Path(__file__).parent.parent))
 
 from core.gossip import AeternaGossipNet
+from core.sigillum_gossip import GossipCipher
+import secrets
 from core.handshake import build_peer_announce, verify_peer_announce
 
 
@@ -71,8 +73,14 @@ def main() -> int:
     client_a = FakeSantuarioClient(b"test-public-key-a")
     client_b = FakeSantuarioClient(b"test-public-key-b")
 
+    # v0.4 Sigillum: both ends share a single ephemeral root key so
+    # they can decrypt each other's frames. In production the key
+    # comes from each node's own gossip_root.key file, distributed
+    # out-of-band.
+    shared_root = secrets.token_bytes(32)
     net_a = AeternaGossipNet(
         "Prometheus-A",
+        cipher=GossipCipher(shared_root),
         bind_host="127.0.0.1",
         port=port_a,
         bootstrap_peers=[("127.0.0.1", port_b)],
@@ -80,6 +88,7 @@ def main() -> int:
     )
     net_b = AeternaGossipNet(
         "Prometheus-B",
+        cipher=GossipCipher(shared_root),
         bind_host="127.0.0.1",
         port=port_b,
         bootstrap_peers=[("127.0.0.1", port_a)],

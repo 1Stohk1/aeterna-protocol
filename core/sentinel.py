@@ -47,6 +47,7 @@ except ModuleNotFoundError:  # pragma: no cover
 import zmq
 
 from core.gossip import AeternaGossipNet
+from core.sigillum_gossip import GossipCipher, load_or_generate_root_key
 from core.metrics_contributor import MetricsContributor
 from core.nat_udp import RendezvousHint, parse_rendezvous_hints
 from core.poc import (
@@ -203,8 +204,24 @@ class Sentinel:
             self._public_key = b"stub_public_key"
             LOG.warning("Santuario is disabled in aeterna.toml. Running in Genesis mode without signatures.")
 
+        # v0.4 Sigillum: provision the gossip root key. Same first-boot
+        # semantics as the audit log master key (Phase A): random 32 B
+        # generated and persisted on first run, loaded on subsequent
+        # boots. Phase C will replace the random-on-first-boot path
+        # with BIP-39 derivation; the file location stays stable.
+        repo_root = Path(__file__).parent.parent
+        gossip_root_key_path = repo_root / "santuario" / "vault" / "gossip_root.key"
+        gossip_root_key = load_or_generate_root_key(gossip_root_key_path)
+        gossip_cipher = GossipCipher(gossip_root_key)
+        LOG.info(
+            "gossip cipher root key id: %s (%s)",
+            gossip_cipher.root_key_id_hex,
+            gossip_root_key_path,
+        )
+
         self._gossip = AeternaGossipNet(
             guardian_id=self.cfg.guardian_id,
+            cipher=gossip_cipher,
             port=self.cfg.gossip_port,
             bootstrap_peers=self.cfg.bootstrap_peers,
             fanout=self.cfg.gossip_fanout,

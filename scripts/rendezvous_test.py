@@ -10,9 +10,12 @@ from typing import Any
 
 sys.path.append(str(Path(__file__).parent.parent))
 
+import secrets
+
 from core.gossip import AeternaGossipNet
 from core.handshake import build_peer_announce, verify_peer_announce
 from core.nat_udp import RendezvousHint
+from core.sigillum_gossip import GossipCipher
 from ops.rendezvous.server import RendezvousRelay
 
 
@@ -61,8 +64,11 @@ def main() -> int:
     client_b = FakeSantuarioClient(b"test-public-key-b")
     hint = RendezvousHint(relay_host, relay_port)
 
+    # v0.4 Sigillum: shared ephemeral root key between the two ends.
+    shared_root = secrets.token_bytes(32)
     net_a = AeternaGossipNet(
         "Prometheus-A",
+        cipher=GossipCipher(shared_root),
         bind_host="127.0.0.1",
         port=0,
         rendezvous_hints=[hint],
@@ -70,6 +76,7 @@ def main() -> int:
     )
     net_b = AeternaGossipNet(
         "Prometheus-B",
+        cipher=GossipCipher(shared_root),
         bind_host="127.0.0.1",
         port=0,
         rendezvous_hints=[hint],
