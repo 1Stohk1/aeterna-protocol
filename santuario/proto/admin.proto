@@ -41,6 +41,26 @@ service Admin {
     // during this call; it only reports what the Sentinel already
     // knows.
     rpc ListPeers (ListPeersRequest) returns (ListPeersResponse);
+
+    // v0.4.0 "Sigillum" Phase C — operator-endpoint ratchet control.
+
+    // Return the signer's long-term X25519 identity public key (32
+    // bytes, hex-encoded). The operator imports this out-of-band once
+    // via `santuarioctl identity import` to bootstrap future handshakes.
+    rpc GetSignerIdentity (GetSignerIdentityRequest) returns (GetSignerIdentityResponse);
+
+    // Perform an X3DH-lite handshake. The operator sends its ephemeral
+    // public key; the signer replies with its own. Both sides derive
+    // the same root_key and establish a ratchet session.
+    rpc Rehandshake (RehandshakeRequest) returns (RehandshakeResponse);
+
+    // Force an immediate ratchet step (advances the chain key, resets
+    // the per-step counter). Equivalent to `santuarioctl ratchet step`.
+    rpc StepRatchet (StepRatchetRequest) returns (StepRatchetResponse);
+
+    // Query the current ratchet session state. Equivalent to
+    // `santuarioctl ratchet status`.
+    rpc GetRatchetStatus (GetRatchetStatusRequest) returns (GetRatchetStatusResponse);
 }
 
 // --- GetMetrics -------------------------------------------------------------
@@ -131,4 +151,64 @@ message Peer {
     uint64 tx_count = 5;
     // True iff the peer is in the current bootstrap_peers list.
     bool is_bootstrap = 6;
+}
+
+// --- GetSignerIdentity (v0.4.0 Sigillum Phase C) ----------------------------
+
+message GetSignerIdentityRequest {}
+
+message GetSignerIdentityResponse {
+    // Hex-encoded 32-byte X25519 public key. Safe to log, print, QR-encode.
+    // The operator imports this once via `santuarioctl identity import`.
+    string identity_pub_hex = 1;
+    // 16-byte fingerprint (SHA-256 of pubkey, first 16 bytes), hex-encoded.
+    // Displayed by santuarioctl for human verification.
+    string identity_id_hex = 2;
+}
+
+// --- Rehandshake (v0.4.0 Sigillum Phase C) ----------------------------------
+
+message RehandshakeRequest {
+    // Operator's single-use ephemeral X25519 public key (32 bytes).
+    bytes operator_eph_pub = 1;
+}
+
+message RehandshakeResponse {
+    // Signer's single-use ephemeral X25519 public key (32 bytes).
+    bytes signer_eph_pub = 1;
+}
+
+// --- StepRatchet (v0.4.0 Sigillum Phase C) ----------------------------------
+
+message StepRatchetRequest {}
+
+message StepRatchetResponse {
+    bool   ok       = 1;
+    // Non-empty only when ok = false.
+    string error    = 2;
+    // The session's step counter after a successful step.
+    uint32 new_step = 3;
+}
+
+// --- GetRatchetStatus (v0.4.0 Sigillum Phase C) -----------------------------
+
+message GetRatchetStatusRequest {}
+
+message GetRatchetStatusResponse {
+    // True if a handshake has been completed and the session is alive.
+    bool established = 1;
+    // True if the session has tombstoned (3 consecutive AuthFailed events).
+    // Only escape: fresh Rehandshake.
+    bool tombstoned = 2;
+    // Current ratchet step (chain index). 0 = initial step post-handshake.
+    uint32 step = 3;
+    // Sealed messages sent in the current step.
+    uint32 msgs_sent_in_step = 4;
+    // Age of the current step in seconds.
+    double age_seconds = 5;
+    // UTC seconds of the last completed handshake. 0 if no handshake yet.
+    int64 last_handshake_utc = 6;
+    // Configured thresholds (for operator display in `santuarioctl ratchet status`).
+    uint32 step_max_seconds = 7;
+    uint32 step_max_messages = 8;
 }

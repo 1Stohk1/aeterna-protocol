@@ -124,6 +124,14 @@
 #   .\bootstrap.ps1 -SkipSigner
 #       I already have `cargo run` running in another shell; just bring
 #       up Julia and Sentinel.
+#
+#   .\bootstrap.ps1 -SeedFile ./santuario/vault/seed.bip39
+#       v0.4 Sigillum first boot: pass the 24-word BIP-39 seed file so
+#       the signer derives its master log key and ratchet identity on
+#       startup rather than using the ephemeral random key. On all
+#       subsequent boots the signer re-reads the same seed file from the
+#       vault. If -SeedFile is omitted, the signer falls back to the
+#       random-on-first-boot key (dev / pre-key-import mode).
 # =============================================================================
 
 [CmdletBinding()]
@@ -142,7 +150,11 @@ param(
     [string]   $SignerProfile       = "release",
     [int]      $SignerReadyTimeoutSec   = 120,
     [int]      $ZmqReadyTimeoutSec      = 90,
-    [int]      $ExporterReadyTimeoutSec = 60
+    [int]      $ExporterReadyTimeoutSec = 60,
+    # v0.4 Sigillum: optional path to the BIP-39 seed file. When provided,
+    # the signer reads this file to derive its master log key + ratchet
+    # identity instead of using the ephemeral random-on-first-boot key.
+    [string]   $SeedFile            = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -155,8 +167,11 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $RepoRoot
 
+$EncryptedLogStatus = if ($SeedFile -ne "" -and (Test-Path $SeedFile)) { "yes (seed: $SeedFile)" } else { "no (ephemeral key — run santuarioctl key import)" }
+$RatchetStatus      = if ($SeedFile -ne "" -and (Test-Path $SeedFile)) { "active (identity derived from seed)" } else { "inactive (no seed file)" }
+
 $Banner = @"
->>> AETERNA bootstrap v2 "Tripod+Oculus" (Windows Edition)
+>>> AETERNA bootstrap v2 "Tripod+Sigillum" (Windows Edition)
     repo                : $RepoRoot
     config              : $Config
     santuario port      : $SantuarioPort
@@ -166,6 +181,8 @@ $Banner = @"
     install deps        : $($InstallDeps.IsPresent)
     regen julia manifest: $($RegenJuliaManifest.IsPresent)
     skip signer/julia/exporter/sentinel : $($SkipSigner.IsPresent) / $($SkipJulia.IsPresent) / $($SkipExporter.IsPresent) / $($SkipSentinel.IsPresent)
+    encrypted_log       : $EncryptedLogStatus
+    ratchet             : $RatchetStatus
 "@
 Write-Host $Banner -ForegroundColor Cyan
 
@@ -417,10 +434,17 @@ try {
         }
 
         Write-Host "[1/4] Launching Santuario signer ($SignerProfile) ..." -ForegroundColor Cyan
+        # v0.4 Sigillum: forward the seed file path if provided so the
+        # signer can re-derive the master log key + ratchet identity.
+        $signerExtraEnv = @{ SANTUARIO_PORT = "$SantuarioPort" }
+        if ($SeedFile -ne "" -and (Test-Path $SeedFile)) {
+            $signerExtraEnv["AETERNA_SEED_FILE"] = (Resolve-Path $SeedFile).Path
+            Write-Host "    Sigillum seed file: $((Resolve-Path $SeedFile).Path)" -ForegroundColor DarkCyan
+        }
         Start-Child -Label "santuario-signer" `
                     -FilePath $signerExe `
                     -ArgumentList @() `
-                    -ExtraEnv @{ SANTUARIO_PORT = "$SantuarioPort" } | Out-Null
+                    -ExtraEnv $signerExtraEnv | Out-Null
         Wait-TcpReady -Port $SantuarioPort -TimeoutSec $SignerReadyTimeoutSec `
                       -Label "santuario-signer"
     } else {

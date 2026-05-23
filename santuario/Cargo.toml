@@ -7,6 +7,7 @@ members = [
     "integrity",
     "exporter",
     "cipher",
+    "ratchet",
 ]
 resolver = "2"
 
@@ -32,6 +33,15 @@ rand_core       = { version = "0.6", features = ["std"] }
 zeroize         = { version = "1.7", features = ["zeroize_derive"] }
 pqcrypto-dilithium = "0.5"
 pqcrypto-traits    = "0.3"
+# v0.4 Sigillum Phase C: X25519 ECDH for the operator-endpoint X3DH-lite
+# handshake. `static_secrets` lets us persist the signer's long-term
+# identity key on disk (load_or_generate at boot, mirroring the vault
+# pattern). Zeroize is in the default feature set so secret bytes are
+# wiped on drop.
+x25519-dalek    = { version = "2", features = ["static_secrets"] }
+# v0.4 Sigillum Phase D: BIP-39 mnemonic parsing + PBKDF2-HMAC-SHA512 seed
+# derivation for the `santuarioctl key import` operator command.
+bip39           = "2"
 
 # Serialization
 serde        = { version = "1", features = ["derive"] }

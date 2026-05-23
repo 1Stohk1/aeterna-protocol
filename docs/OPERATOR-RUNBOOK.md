@@ -61,6 +61,13 @@ curl.exe -s http://127.0.0.1:9477/metrics | Select-String "aeterna_node_info"
 
 # 5. War Room loads (browser opens, expect 5 panels in <2s)
 Start-Process http://127.0.0.1:8501
+
+# v0.4 Sigillum additions
+# 6. Master key id is recognised (non-zero means key envelope is present)
+santuarioctl key status
+
+# 7. Ratchet session is established (phase C)
+santuarioctl ratchet status
 ```
 
 If any fails: see **section 9 -- node-health issues** before proceeding.
@@ -93,6 +100,8 @@ Each alert below follows this template, in order:
 | vault sealed | manual or auto on TPM2 anomaly | refuses to sign | within 30 min |
 | signer suspended | alpha trip OR manual `santuarioctl suspend` | refuses to sign | **immediate** |
 | recovery_token_issued | informational | none -- this is itself a recovery action | distribute token securely |
+| key_rotation_due | manual (v0.4 Sigillum) | none | within 24 hours of notice |
+| ratchet_desync | 3 consecutive AuthFailed on the gRPC channel | refuses ratchet encrypt/decrypt | within 1 hour |
 
 ### The four mental questions
 
@@ -723,9 +732,179 @@ What was missing or misleading? File issues for runbook updates.
 
 ---
 
-## 12. Closing principle
+---
 
-This runbook is the operator-facing closure of sprint v0.3.0 "Oculus".
+## 12. Key rotation (v0.4 Sigillum)
+
+> **Signal → Diagnosis → Recovery → SLO**
+
+### When to rotate
+
+Rotate the BIP-39 master seed when:
+
+1. You suspect the seed phrase was exposed (written down in an insecure location, observed by an unauthorised person, stored unencrypted on a device that was stolen or compromised).
+2. The previous operator's tenure ends and key custody must transfer.
+3. A periodic rotation policy requires it (recommended maximum: 12 months).
+4. `santuarioctl key status` shows `last_rotation_utc` older than your policy window.
+
+Do **not** rotate on routine reboots, software upgrades, or mere suspicion without evidence. Each rotation discards all prior ciphertext (segments cannot be re-encrypted retrospectively). Plan archival before rotating.
+
+### Diagnosis
+
+Confirm that rotation is actually warranted before proceeding:
+
+```powershell
+santuarioctl key status
+# Review: master_key_id, derivation_utc, last_rotation_utc
+santuarioctl ratchet status
+# If established=no: ratchet is inactive (separate issue, see §13)
+```
+
+If `last_rotation_utc` is within your policy window and there is no exposure event, stop here. No rotation needed.
+
+### Recovery procedure
+
+> **Archive first.** Encrypted segments written under the OLD key cannot be decrypted after the new key is in place. Store a copy of `./logs/audit/` under a clearly dated path before rotating.
+
+```powershell
+# 1. Archive current encrypted segments.
+$ts = Get-Date -Format "yyyyMMdd-HHmm"
+Copy-Item -Recurse ./logs/audit "./logs/audit-archive-$ts"
+Write-Host "Archived segments to logs/audit-archive-$ts"
+
+# 2. Generate a new BIP-39 seed phrase (use a CSPRNG tool, e.g.
+#    `bip39-keygen` or hardware wallet). Write 24 words on paper.
+#    Store the paper in a physically secured location.
+
+# 3. Save the new phrase to a temporary file.
+notepad.exe ./new_seed.bip39   # type the 24 words, save, close
+
+# 4. Import the new seed. Confirm the paper-backup prompt.
+santuarioctl key import ./new_seed.bip39
+
+# 5. Delete the temporary seed file securely.
+Remove-Item ./new_seed.bip39
+
+# 6. Verify the new master key id is recorded.
+santuarioctl key status
+
+# 7. Restart the signer so it re-derives the log key on next boot.
+#    (The signer will start a new segment chain from the new key.)
+#    Kill and restart via bootstrap.ps1 -SeedFile <vault/seed.bip39>
+
+# 8. Re-handshake the operator-endpoint ratchet under the new identity.
+santuarioctl identity show | Out-File -Encoding utf8 ./signer_identity.pub
+santuarioctl identity import ./signer_identity.pub
+santuarioctl ratchet rehandshake
+Remove-Item ./signer_identity.pub
+
+# 9. Confirm: read a new audit record under the new key.
+santuarioctl tail
+```
+
+### SLO
+
+| Step | Target |
+|---|---|
+| Archive segments | < 5 min |
+| Generate + import new seed | < 15 min |
+| Signer restart + ratchet re-handshake | < 5 min |
+| **Total rotation window** | **< 30 min** |
+
+Escalate if any step exceeds its target by 100%: the most likely cause is a missing or corrupted `keys.envelope`, which requires re-deriving from the seed phrase manually.
+
+---
+
+## 13. Operator key compromise recovery (v0.4 Sigillum)
+
+> **Signal → Diagnosis → Recovery → SLO**
+
+### Signals of key compromise
+
+The operator notices one or more of the following:
+
+1. **Suspicious Telegram pushes**: alerts arrive from a `chat_id` that is not in `aeterna.toml [operations.telegram] allowed_chat_ids`.
+2. **Decryption failures**: `santuarioctl tail` returns `Err(InvalidTag)` on segments the operator knows are intact.
+3. **Ratchet desync without operator action**: `santuarioctl ratchet status` shows `tombstoned=yes` and the operator did not trigger a step or rehandshake.
+4. **Audit of recent gRPC sessions** shows calls the operator cannot account for.
+
+### Diagnosis
+
+```powershell
+# 1. Check ratchet state.
+santuarioctl ratchet status
+# expected: established=yes, tombstoned=no
+# if tombstoned=yes: proceed to recovery
+
+# 2. Check audit tail for unexpected RPCs.
+santuarioctl tail --limit 50
+# Look for unusual patterns: many GetRatchetStatus calls in a burst,
+# rehandshake calls at unexpected times, etc.
+
+# 3. Verify the master key id matches your paper backup.
+santuarioctl key status
+# Compare master_key_id to the fingerprint on your paper backup card.
+# A mismatch means the keys.envelope was replaced by an attacker.
+```
+
+If none of the signals are present, the desync is likely transient (network jitter, process restart). Run `santuarioctl ratchet rehandshake` and monitor.
+
+If one or more signals are confirmed, treat this as a key compromise event:
+
+### Recovery procedure
+
+**Treat the signer's gRPC port as hostile until a new ratchet session is established under a fresh identity.**
+
+```powershell
+# 1. Suspend the signer immediately (prevents further signing).
+santuarioctl audit --accept    # force a baseline capture so the
+                               # post-incident sweep is clean
+
+# 2. Rotate the master seed (see §12 Key rotation). This also rotates
+#    the ratchet identity, because both are derived from the same seed.
+
+# 3. Verify the signer has restarted with the new identity.
+santuarioctl identity show
+# Record the new identity_id_hex on your paper backup card.
+
+# 4. Re-import the new signer identity and re-handshake.
+santuarioctl identity show | Out-File -Encoding utf8 ./new_identity.pub
+santuarioctl identity import ./new_identity.pub
+santuarioctl ratchet rehandshake
+Remove-Item ./new_identity.pub
+
+# 5. Confirm the session is established under the new step-0 key.
+santuarioctl ratchet status
+# expected: established=yes, step=0, tombstoned=no
+
+# 6. Resume the signer after manual review of the audit tail.
+santuarioctl resume --token <challenge-hex> --operator "key-rotation-recovery"
+```
+
+### SLO
+
+| Step | Target |
+|---|---|
+| Suspend signer | < 2 min |
+| Rotate key + restart | < 30 min (see §12) |
+| Re-handshake + confirm | < 5 min |
+| **Total recovery window** | **< 40 min** |
+
+The signer is unsigned-safe during this window (it refuses to sign while suspended). The recovery is complete when `santuarioctl ratchet status` shows `established=yes` on the NEW session and `santuarioctl key status` shows the new `master_key_id`.
+
+### Postmortem
+
+File a postmortem within 24 hours using the template in §11. Include:
+- When the first signal was observed vs. when recovery began.
+- Whether the compromise was confirmed or precautionary.
+- Which surface surfaced the signal first (Telegram, ratchet desync, decryption error).
+
+---
+
+## 14. Closing principle
+
+This runbook is the operator-facing closure of sprint v0.3.0 "Oculus"
+extended to sprint v0.4.0 "Sigillum".
 It owes its structure to the principle that the worst moment to learn
 how a system fails is when it is failing.
 
@@ -736,9 +915,10 @@ postmortem.
 
 *See also:*
 
-- [`docs/SPRINT-v0.3.0.md`](./SPRINT-v0.3.0.md) -- sprint plan and acceptance criteria
+- [`docs/SPRINT-v0.3.0.md`](./SPRINT-v0.3.0.md) -- prior sprint (Oculus visibility primitives)
+- [`docs/SPRINT-v0.4.0.md`](./SPRINT-v0.4.0.md) -- current sprint plan (Sigillum, §§12-13 source)
 - [`docs/CONSENSUS.md`](./CONSENSUS.md) -- Trust Score formula referenced in section 0
 - [`docs/AGP-v1.md`](./AGP-v1.md) -- AGP-v1 payload format
-- [`aeterna.toml`](../aeterna.toml) -- `[integrity]` thresholds referenced throughout sections 3-5
+- [`aeterna.toml`](../aeterna.toml) -- `[integrity]` and `[sigillum]` thresholds
 - [`operations/grafana/aeterna-overview.json`](../operations/grafana/aeterna-overview.json) -- Grafana dashboard JSON
 - [`operations/grafana/prometheus-scrape-snippet.yaml`](../operations/grafana/prometheus-scrape-snippet.yaml) -- Prometheus scrape config snippet

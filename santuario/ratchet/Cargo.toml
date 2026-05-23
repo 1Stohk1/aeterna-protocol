@@ -1,0 +1,42 @@
+[package]
+name        = "santuario-ratchet"
+description = "Sigillum (v0.4.0) one-way ratchet for the operator-endpoint channel. X3DH-lite handshake (X25519 ECDH) + ChaCha20-Poly1305 + HKDF-driven session ratchet with periodic rekey and tombstone-on-failure."
+version.workspace      = true
+edition.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[dependencies]
+# v0.4 dep-on-cipher: re-use the same MasterLogKey-style file layout for
+# the signer's long-term X25519 identity, and lean on the cipher crate's
+# error / debug-redaction conventions where possible.
+santuario-cipher = { path = "../cipher" }
+
+# Crypto primitives
+x25519-dalek     = { workspace = true }
+chacha20poly1305 = { workspace = true }
+hkdf             = { workspace = true }
+sha2             = { workspace = true }
+zeroize          = { workspace = true }
+rand             = { workspace = true }
+rand_core        = { workspace = true }
+bip39            = { workspace = true }
+
+# Serialization (wire framing)
+serde            = { workspace = true }
+serde_bytes      = { workspace = true }
+
+# Errors
+thiserror        = { workspace = true }
+
+# Helpers
+hex              = { workspace = true }
+
+[dev-dependencies]
+tempfile         = { workspace = true }
+
+[lib]
+name = "santuario_ratchet"
+path = "src/lib.rs"

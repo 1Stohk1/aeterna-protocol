@@ -220,6 +220,38 @@ seed_source              = "sentinel"         # sentinel (canonical) | julia
 freeze_julia_version     = "1.10.2"
 require_manifest_hash    = true
 
+[sigillum]
+# ----------------------------------------------------------------------------
+# v0.4.0 "Sigillum" — cryptographic confidentiality layer (Phase A/B/C).
+#
+# The operator MUST provision a BIP-39 24-word seed phrase at
+# `seed_file_path` before the signer will start in production.
+# On first boot, run: santuarioctl key import <seed-file>
+# then: santuarioctl key status                          (confirm the id)
+# then: santuarioctl identity import <signer-pub-file>   (operator side)
+# then: santuarioctl ratchet rehandshake                 (open the channel)
+#
+# `require_encrypted_log = true` is the only production-legal value.
+# Setting it to false errors out at sentinel boot with ConfigForbidden.
+# ----------------------------------------------------------------------------
+
+# --- Phase A: audit log segments -------------------------------------------
+log_segment_max_bytes       = 10_485_760    # 10 MiB plaintext-equivalent per segment
+log_segment_dir             = "./logs/audit/"
+
+# --- Phase B: gossip session keys ------------------------------------------
+gossip_session_max_seconds  = 3600          # rotate gossip session key hourly
+gossip_session_max_messages = 65_535        # or every 65 535 frames
+
+# --- Phase C: operator-endpoint ratchet ------------------------------------
+ratchet_max_seconds         = 600           # step every 10 min of wall-clock
+ratchet_max_messages        = 1024          # or every 1024 sealed messages
+
+# --- Key management --------------------------------------------------------
+seed_file_path              = "./santuario/vault/seed.bip39"     # operator-managed, chmod 0600
+key_envelope_path           = "./santuario/vault/keys.envelope"  # metadata cache
+require_encrypted_log       = true          # cesura netta — false forbidden in prod
+
 [logging]
 # All logs are structured JSON. The Santuario audit log is separate and append-only.
 format                   = "json"

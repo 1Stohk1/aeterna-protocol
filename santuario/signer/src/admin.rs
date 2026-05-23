@@ -11,7 +11,10 @@
 //! port, two services. This matters for the Windows dev path where we
 //! fall back from UDS to loopback TCP on `$SANTUARIO_PORT`.
 
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicI64, Ordering},
+    Arc, Mutex,
+};
 
 use tonic::{Request, Response, Status};
 
@@ -20,6 +23,10 @@ use crate::peers::PeerSnapshotReader;
 use crate::sentinel_metrics::SentinelMetricsReader;
 
 use santuario_integrity::{AuditLog, AuditRecord};
+use santuario_ratchet::{
+    HandshakeRequest, Session, Side, SignerEndpoint, SignerIdentityKey,
+    DEFAULT_STEP_MAX_MESSAGES, DEFAULT_STEP_MAX_SECONDS,
+};
 
 pub mod pb {
     tonic::include_proto!("santuario.admin.v1");
@@ -27,8 +34,14 @@ pub mod pb {
 
 use pb::admin_server::{Admin, AdminServer};
 use pb::{
-    AuditLogLine, GetMetricsRequest, GetMetricsResponse, ListPeersRequest, ListPeersResponse,
-    Peer as PbPeer, Quantiles as PbQuantiles, TailAuditLogRequest, TailAuditLogResponse,
+    AuditLogLine, GetMetricsRequest, GetMetricsResponse,
+    GetRatchetStatusRequest, GetRatchetStatusResponse,
+    GetSignerIdentityRequest, GetSignerIdentityResponse,
+    ListPeersRequest, ListPeersResponse,
+    Peer as PbPeer, Quantiles as PbQuantiles,
+    RehandshakeRequest, RehandshakeResponse,
+    StepRatchetRequest, StepRatchetResponse,
+    TailAuditLogRequest, TailAuditLogResponse,
 };
 
 /// Bumped whenever a new counter/gauge/quantile key is added.
@@ -50,6 +63,16 @@ pub struct AdminService {
     /// and gauges via an atomic JSON file; the Admin service merges
     /// them into its response at query time.
     pub sentinel_metrics: SentinelMetricsReader,
+    /// v0.4.0 "Sigillum" Phase C — signer's long-term X25519 identity.
+    /// Never leaves the process; the public half is served by
+    /// `GetSignerIdentity` so the operator can bootstrap handshakes.
+    pub signer_identity: Arc<SignerIdentityKey>,
+    /// Per-connection ratchet session (signer side). Replaced wholesale
+    /// on each `Rehandshake` call. None until first handshake completes.
+    pub ratchet_session: Arc<Mutex<Option<Session>>>,
+    /// UTC seconds of the most recent completed handshake. 0 = no handshake
+    /// yet. AtomicI64 so reads don't need to hold the ratchet_session lock.
+    pub ratchet_last_handshake_utc: Arc<AtomicI64>,
 }
 
 #[tonic::async_trait]
@@ -134,6 +157,127 @@ impl Admin for AdminService {
             snapshot_utc,
         }))
     }
+
+    // v0.4.0 "Sigillum" Phase C --------------------------------------------------
+
+    async fn get_signer_identity(
+        &self,
+        _req: Request<GetSignerIdentityRequest>,
+    ) -> Result<Response<GetSignerIdentityResponse>, Status> {
+        let pub_key = self.signer_identity.public();
+        Ok(Response::new(GetSignerIdentityResponse {
+            identity_pub_hex: pub_key.to_hex(),
+            identity_id_hex: self.signer_identity.id_hex(),
+        }))
+    }
+
+    async fn rehandshake(
+        &self,
+        req: Request<RehandshakeRequest>,
+    ) -> Result<Response<RehandshakeResponse>, Status> {
+        let inner = req.into_inner();
+        if inner.operator_eph_pub.len() != 32 {
+            return Err(Status::invalid_argument(
+                "operator_eph_pub must be exactly 32 bytes (X25519 public key)",
+            ));
+        }
+        let mut pub_bytes = [0u8; 32];
+        pub_bytes.copy_from_slice(&inner.operator_eph_pub);
+
+        let hs_req = HandshakeRequest {
+            operator_eph_pub: pub_bytes,
+        };
+        let signer_ep = SignerEndpoint::new(&self.signer_identity);
+        let (hs_resp, root_key) = signer_ep
+            .accept(hs_req)
+            .map_err(|e| Status::internal(format!("handshake failed: {e}")))?;
+
+        let session = Session::new(&root_key, Side::Signer)
+            .map_err(|e| Status::internal(format!("session init failed: {e}")))?;
+
+        *self.ratchet_session.lock().unwrap() = Some(session);
+        self.ratchet_last_handshake_utc
+            .store(santuario_integrity::now_utc(), Ordering::Relaxed);
+        // A fresh handshake also resets the per-step counter, so we
+        // count it as step 0 of the new session. The total counter
+        // only goes up on actual ratchet steps (StepRatchet), not
+        // on handshakes, to keep the metric's semantics clean.
+
+        Ok(Response::new(RehandshakeResponse {
+            signer_eph_pub: hs_resp.signer_eph_pub.to_vec(),
+        }))
+    }
+
+    async fn step_ratchet(
+        &self,
+        _req: Request<StepRatchetRequest>,
+    ) -> Result<Response<StepRatchetResponse>, Status> {
+        let step_result = {
+            let mut guard = self.ratchet_session.lock().unwrap();
+            if let Some(session) = guard.as_mut() {
+                session
+                    .step()
+                    .map(|_| session.status().step)
+                    .map_err(|e| e.to_string())
+            } else {
+                Err(
+                    "no active session — run `santuarioctl ratchet rehandshake` first"
+                        .to_string(),
+                )
+            }
+        };
+        match step_result {
+            Ok(new_step) => {
+                self.metrics.incr("santuario_ratchet_steps_total");
+                Ok(Response::new(StepRatchetResponse {
+                    ok: true,
+                    error: String::new(),
+                    new_step,
+                }))
+            }
+            Err(msg) => Ok(Response::new(StepRatchetResponse {
+                ok: false,
+                error: msg,
+                new_step: 0,
+            })),
+        }
+    }
+
+    async fn get_ratchet_status(
+        &self,
+        _req: Request<GetRatchetStatusRequest>,
+    ) -> Result<Response<GetRatchetStatusResponse>, Status> {
+        let last_hs = self
+            .ratchet_last_handshake_utc
+            .load(Ordering::Relaxed);
+        let guard = self.ratchet_session.lock().unwrap();
+        let resp = match guard.as_ref() {
+            None => GetRatchetStatusResponse {
+                established: false,
+                tombstoned: false,
+                step: 0,
+                msgs_sent_in_step: 0,
+                age_seconds: 0.0,
+                last_handshake_utc: last_hs,
+                step_max_seconds: DEFAULT_STEP_MAX_SECONDS as u32,
+                step_max_messages: DEFAULT_STEP_MAX_MESSAGES,
+            },
+            Some(session) => {
+                let s = session.status();
+                GetRatchetStatusResponse {
+                    established: !s.tombstoned,
+                    tombstoned: s.tombstoned,
+                    step: s.step,
+                    msgs_sent_in_step: s.msgs_sent_in_step,
+                    age_seconds: s.age_seconds,
+                    last_handshake_utc: last_hs,
+                    step_max_seconds: DEFAULT_STEP_MAX_SECONDS as u32,
+                    step_max_messages: DEFAULT_STEP_MAX_MESSAGES,
+                }
+            }
+        };
+        Ok(Response::new(resp))
+    }
 }
 
 /// Read the audit log via the encrypted segment manager and convert
@@ -201,6 +345,10 @@ mod tests {
             sentinel_metrics: SentinelMetricsReader::new(
                 dir.join("sentinel_metrics.json"),
             ),
+            // Phase C: fresh ephemeral identity per test.
+            signer_identity: Arc::new(SignerIdentityKey::generate()),
+            ratchet_session: Arc::new(Mutex::new(None)),
+            ratchet_last_handshake_utc: Arc::new(AtomicI64::new(0)),
         }
     }
 
@@ -396,5 +544,148 @@ mod tests {
         assert!(resp.peers.is_empty());
         // snapshot_utc is filled with "now" when no file exists.
         assert!(resp.snapshot_utc > 0);
+    }
+
+    // --- Phase C ratchet tests -----------------------------------------------
+
+    #[tokio::test]
+    async fn get_signer_identity_returns_valid_hex() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = make_service_in(dir.path());
+        let resp = svc
+            .get_signer_identity(Request::new(GetSignerIdentityRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(resp.identity_pub_hex.len(), 64, "32 bytes = 64 hex chars");
+        assert_eq!(resp.identity_id_hex.len(), 32, "16 bytes = 32 hex chars");
+        // Both are valid hex.
+        hex::decode(&resp.identity_pub_hex).expect("identity_pub_hex is valid hex");
+        hex::decode(&resp.identity_id_hex).expect("identity_id_hex is valid hex");
+    }
+
+    #[tokio::test]
+    async fn ratchet_status_before_handshake_is_unestablished() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = make_service_in(dir.path());
+        let resp = svc
+            .get_ratchet_status(Request::new(GetRatchetStatusRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!resp.established);
+        assert!(!resp.tombstoned);
+        assert_eq!(resp.last_handshake_utc, 0);
+    }
+
+    #[tokio::test]
+    async fn step_ratchet_without_session_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let svc = make_service_in(dir.path());
+        let resp = svc
+            .step_ratchet(Request::new(StepRatchetRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(!resp.ok);
+        assert!(!resp.error.is_empty());
+    }
+
+    #[tokio::test]
+    async fn full_handshake_establishes_session() {
+        use santuario_ratchet::{OperatorEndpoint, SignerIdentityPublic};
+
+        let dir = tempfile::tempdir().unwrap();
+        let svc = make_service_in(dir.path());
+
+        // Get signer's public key.
+        let id_resp = svc
+            .get_signer_identity(Request::new(GetSignerIdentityRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        let id_bytes = hex::decode(&id_resp.identity_pub_hex).unwrap();
+        let mut id_arr = [0u8; 32];
+        id_arr.copy_from_slice(&id_bytes);
+        let signer_pub = SignerIdentityPublic::from_bytes(id_arr);
+
+        // Operator generates ephemeral + sends handshake request.
+        let operator_ep = OperatorEndpoint::new(signer_pub);
+        let hs_req = operator_ep.handshake_request();
+
+        let hs_resp = svc
+            .rehandshake(Request::new(RehandshakeRequest {
+                operator_eph_pub: hs_req.operator_eph_pub.to_vec(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+
+        // Operator finalises and builds its own session.
+        let mut signer_eph_bytes = [0u8; 32];
+        signer_eph_bytes.copy_from_slice(&hs_resp.signer_eph_pub);
+        let _operator_root = operator_ep
+            .finalize(santuario_ratchet::HandshakeResponse {
+                signer_eph_pub: signer_eph_bytes,
+            })
+            .unwrap();
+
+        // Signer side should now be established.
+        let status = svc
+            .get_ratchet_status(Request::new(GetRatchetStatusRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(status.established, "session must be established after handshake");
+        assert!(!status.tombstoned);
+        assert!(status.last_handshake_utc > 0);
+        assert_eq!(status.step, 0);
+    }
+
+    #[tokio::test]
+    async fn step_ratchet_after_handshake_increments_step() {
+        use santuario_ratchet::{OperatorEndpoint, SignerIdentityPublic};
+
+        let dir = tempfile::tempdir().unwrap();
+        let svc = make_service_in(dir.path());
+
+        // Handshake.
+        let id_resp = svc
+            .get_signer_identity(Request::new(GetSignerIdentityRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        let mut id_arr = [0u8; 32];
+        id_arr.copy_from_slice(&hex::decode(&id_resp.identity_pub_hex).unwrap());
+        let op = OperatorEndpoint::new(SignerIdentityPublic::from_bytes(id_arr));
+        let req = op.handshake_request();
+        let hs = svc
+            .rehandshake(Request::new(RehandshakeRequest {
+                operator_eph_pub: req.operator_eph_pub.to_vec(),
+            }))
+            .await
+            .unwrap()
+            .into_inner();
+        let mut eph = [0u8; 32];
+        eph.copy_from_slice(&hs.signer_eph_pub);
+        op.finalize(santuario_ratchet::HandshakeResponse { signer_eph_pub: eph })
+            .unwrap();
+
+        // Step once.
+        let step_resp = svc
+            .step_ratchet(Request::new(StepRatchetRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert!(step_resp.ok, "step_ratchet must succeed after handshake");
+        assert_eq!(step_resp.new_step, 1);
+
+        // Counter in metrics.
+        let met = svc
+            .get_metrics(Request::new(GetMetricsRequest {}))
+            .await
+            .unwrap()
+            .into_inner();
+        assert_eq!(met.counters["santuario_ratchet_steps_total"], 1);
     }
 }

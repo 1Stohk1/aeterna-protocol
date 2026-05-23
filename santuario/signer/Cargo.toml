@@ -18,6 +18,9 @@ santuario-isolation = { path = "../isolation" }
 # imported directly so main.rs can call MasterLogKey::load_or_generate
 # without leaning on a re-export.
 santuario-cipher    = { path = "../cipher" }
+# v0.4 Phase C: operator-endpoint ratchet (AdminService ratchet RPCs +
+# santuarioctl key/ratchet/identity subcommands).
+santuario-ratchet   = { path = "../ratchet" }
 
 # gRPC / async
 tonic        = { workspace = true }
@@ -31,6 +34,8 @@ pqcrypto-traits    = { workspace = true }
 sha2               = { workspace = true }
 hex                = { workspace = true }
 rand               = { workspace = true }
+x25519-dalek       = { workspace = true }
+bip39              = { workspace = true }
 
 # Serde / errors / logging
 serde       = { workspace = true }

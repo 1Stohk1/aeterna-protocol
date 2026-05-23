@@ -53,6 +53,7 @@ use santuario_signer::recovery::{self, RecoveryContext};
 use santuario_signer::sentinel_metrics::SentinelMetricsReader;
 
 use santuario_cipher::MasterLogKey;
+use santuario_ratchet::SignerIdentityKey;
 use santuario_critic::{parse_block, Critic, DefaultCritic, Violation};
 use santuario_integrity::{AuditLog, IntegrityAuditor, IntegrityConfig, SignerState};
 use santuario_isolation::{Launcher, PolicyKind};
@@ -589,6 +590,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         metrics: metrics.clone(),
     };
 
+    // v0.4 Phase C: signer's long-term X25519 identity for the
+    // operator-endpoint ratchet. Loaded from vault; generated on first boot.
+    let signer_identity_path = repo.join("santuario/vault/signer_identity.x25519");
+    let signer_identity = Arc::new(
+        SignerIdentityKey::load_or_generate(&signer_identity_path)
+            .map_err(|e| anyhow::anyhow!("provision signer identity key at {}: {e}",
+                                         signer_identity_path.display()))?,
+    );
+    log::info!(
+        "ratchet signer identity id: {} ({})",
+        signer_identity.id_hex(),
+        signer_identity_path.display()
+    );
+
     // Admin service — same listener as Signer; see SPRINT-v0.3.0 §7.1.
     let admin_service = AdminService {
         node_id: node_id.clone(),
@@ -596,6 +611,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         audit_log: audit_log.clone(),
         peers: PeerSnapshotReader::default_for_repo(&repo),
         sentinel_metrics: SentinelMetricsReader::default_for_repo(&repo),
+        signer_identity,
+        ratchet_session: Arc::new(std::sync::Mutex::new(None)),
+        ratchet_last_handshake_utc: Arc::new(
+            std::sync::atomic::AtomicI64::new(0),
+        ),
     };
 
     let server = Server::builder()
