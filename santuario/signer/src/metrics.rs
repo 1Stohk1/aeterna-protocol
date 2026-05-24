@@ -98,6 +98,17 @@ impl MetricsRegistry {
         *m.entry(name.to_string()).or_insert(0) += by;
     }
 
+    /// Overwrite a counter to a known absolute value. Use only when the
+    /// canonical source-of-truth lives elsewhere (e.g. an `AtomicU64`
+    /// inside `AuditLog`) and the registry is just a mirror polled by
+    /// the metrics housekeeper. The value must come from a monotonic
+    /// source — calling this with a decreasing value would violate the
+    /// counter contract that the exporter relies on.
+    pub fn set_counter(&self, name: &str, v: u64) {
+        let mut m = self.counters.lock().expect("counters mutex poisoned");
+        m.insert(name.to_string(), v);
+    }
+
     pub fn set_gauge(&self, name: &str, v: f64) {
         let mut m = self.gauges.lock().expect("gauges mutex poisoned");
         m.insert(name.to_string(), v);
@@ -168,6 +179,18 @@ mod tests {
         r.set_gauge("santuario_vault_sealed", 0.0);
         let s = r.snapshot();
         assert_eq!(s.gauges["santuario_vault_sealed"], 0.0);
+    }
+
+    #[test]
+    fn set_counter_overwrites_to_absolute_value() {
+        // v0.4 Sigillum: the AuditLog atomic mirror uses set_counter to
+        // push absolute values rather than deltas. Verify the semantics.
+        let r = MetricsRegistry::default();
+        r.set_counter("santuario_log_segments_total", 7);
+        assert_eq!(r.snapshot().counters["santuario_log_segments_total"], 7);
+        // A subsequent set_counter overwrites (mirror of growing atomic).
+        r.set_counter("santuario_log_segments_total", 12);
+        assert_eq!(r.snapshot().counters["santuario_log_segments_total"], 12);
     }
 
     #[test]

@@ -123,6 +123,32 @@ pub const CATALOG: &[CatalogEntry] = &[
         kind: MetricKind::Counter,
         help: "Admin gRPC requests served (GetMetrics + ListPeers + TailAuditLog combined).",
     },
+    // --- v0.4.0 "Sigillum" -----------------------------------------------
+    CatalogEntry {
+        key: "santuario_log_segments_total",
+        kind: MetricKind::Counter,
+        help: "Encrypted .sigillum audit-log segments minted since process start.",
+    },
+    CatalogEntry {
+        key: "santuario_log_bytes_encrypted_total",
+        kind: MetricKind::Counter,
+        help: "Plaintext bytes sealed via ChaCha20-Poly1305 into the audit log.",
+    },
+    CatalogEntry {
+        key: "santuario_ratchet_steps_total",
+        kind: MetricKind::Counter,
+        help: "Sigillum operator-endpoint ratchet steps executed by the signer.",
+    },
+    CatalogEntry {
+        key: "aeterna_gossip_rejected_unencrypted_total",
+        kind: MetricKind::Counter,
+        help: "Inbound gossip datagrams dropped because they were not Sigillum-sealed (v0.4 AC #4).",
+    },
+    CatalogEntry {
+        key: "aeterna_gossip_rejected_authfail_total",
+        kind: MetricKind::Counter,
+        help: "Inbound Sigillum gossip frames dropped due to AEAD authentication failure.",
+    },
 ];
 
 /// Lookup. Returns `None` for keys not in the catalog (which is the

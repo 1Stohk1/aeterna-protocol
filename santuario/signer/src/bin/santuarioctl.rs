@@ -103,15 +103,30 @@ enum Cmd {
     },
     /// v0.3.0 — snapshot the Admin metrics registry.
     Metrics,
-    /// v0.3.0 — print the last N audit log records (raw JSONL).
+    /// v0.3.0 / v0.4.0 — print the last N audit log records.
+    ///
+    /// Without flags: gRPC fetch + decrypted, human-friendly output.
+    /// `--raw`: dump raw .sigillum ciphertext from local segment files
+    /// (forensic export — operator can pipe to `xxd` and read entropy).
+    /// `--json`: gRPC fetch but emit only the canonical JSON lines (jq-friendly).
     Tail {
         /// Number of records from the tail (server-capped at 1000).
+        /// Ignored when `--raw` is set (raw mode dumps full segments).
         #[arg(long, default_value_t = 20)]
         limit: u32,
-        /// Print only raw JSON lines (pipe-friendly). Default is a
-        /// human-readable header + formatted JSON.
-        #[arg(long)]
+        /// Dump raw ciphertext from local .sigillum segment files.
+        /// Implies forensic export — output is binary, pipe to `xxd`
+        /// or redirect to a file. Mutually exclusive with `--json`.
+        #[arg(long, conflicts_with = "json")]
         raw: bool,
+        /// Emit only the canonical JSON lines (no header, jq-friendly).
+        /// Decrypted via the same gRPC path as the default tail.
+        #[arg(long, conflicts_with = "raw")]
+        json: bool,
+        /// Override the segment directory used by `--raw`. Defaults to
+        /// `<AETERNA_REPO_ROOT>/santuario/integrity/audit/`.
+        #[arg(long)]
+        dir: Option<PathBuf>,
     },
     /// v0.3.0 — snapshot the gossip peer view.
     Peers,
@@ -302,19 +317,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 }
             }
         }
-        Cmd::Tail { limit, raw } => {
-            let resp = admin
-                .tail_audit_log(TailAuditLogRequest { limit })
-                .await?
-                .into_inner();
-            if !raw {
-                println!("# {} record(s)", resp.lines.len());
-            }
-            for line in &resp.lines {
-                if raw {
-                    println!("{}", line.json);
+        Cmd::Tail { limit, raw, json, dir } => {
+            if raw {
+                // v0.4 AC #5: forensic ciphertext dump from local segment files.
+                let seg_dir = dir.unwrap_or_else(default_segment_dir);
+                dump_segments_raw(&seg_dir)?;
+            } else {
+                let resp = admin
+                    .tail_audit_log(TailAuditLogRequest { limit })
+                    .await?
+                    .into_inner();
+                if json {
+                    for line in &resp.lines {
+                        println!("{}", line.json);
+                    }
                 } else {
-                    println!("[{}] {} {}", line.ts_utc, line.record, line.json);
+                    println!("# {} record(s)", resp.lines.len());
+                    for line in &resp.lines {
+                        println!("[{}] {} {}", line.ts_utc, line.record, line.json);
+                    }
                 }
             }
         }
@@ -359,6 +380,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 // =============================================================================
 // Phase D helpers
 // =============================================================================
+
+/// Default directory holding `.sigillum` encrypted audit segments,
+/// resolved the same way the signer does: `AETERNA_REPO_ROOT` if set,
+/// else CWD, joined with `santuario/integrity/audit/`.
+fn default_segment_dir() -> PathBuf {
+    std::env::var_os("AETERNA_REPO_ROOT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join("santuario/integrity/audit")
+}
+
+/// v0.4 AC #5 — dump raw ciphertext bytes from every `.sigillum` file
+/// in `dir`, oldest-first by filename. Output is binary; intended for
+/// redirection or pipelines into `xxd`/`hexdump`/forensic tooling.
+fn dump_segments_raw(dir: &std::path::Path) -> Result<(), Box<dyn std::error::Error>> {
+    use std::io::Write;
+
+    let read = std::fs::read_dir(dir).map_err(|e| {
+        format!(
+            "cannot read segment dir {} ({e}). Override with --dir or set AETERNA_REPO_ROOT.",
+            dir.display()
+        )
+    })?;
+    let mut files: Vec<PathBuf> = read
+        .filter_map(|e| e.ok())
+        .map(|e| e.path())
+        .filter(|p| {
+            p.extension()
+                .and_then(|s| s.to_str())
+                .is_some_and(|ext| ext == "sigillum")
+        })
+        .collect();
+    if files.is_empty() {
+        return Err(format!(
+            "no .sigillum segments in {} — has the signer ever appended to the audit log?",
+            dir.display()
+        )
+        .into());
+    }
+    files.sort();
+
+    let stdout = std::io::stdout();
+    let mut handle = stdout.lock();
+    for path in &files {
+        let bytes = std::fs::read(path)
+            .map_err(|e| format!("read {} failed: {e}", path.display()))?;
+        handle.write_all(&bytes)?;
+    }
+    handle.flush()?;
+    Ok(())
+}
 
 /// Canonical path for the operator's imported signer identity pubkey.
 fn default_identity_pub_path() -> PathBuf {

@@ -48,7 +48,7 @@ enable_smart_heating     = true               # Economia del Calcolo — seasona
 
 [sentinel]
 # Python userland orchestrator — core/sentinel.py
-sentinel_version         = "0.3.0"
+sentinel_version         = "0.4.0"
 bind_host                = "0.0.0.0"
 heartbeat_sec            = 30
 pow_difficulty           = 4                  # Leading zero bits on SHA-256

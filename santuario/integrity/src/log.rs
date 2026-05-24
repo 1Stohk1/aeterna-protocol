@@ -84,6 +84,14 @@ pub struct AuditLog {
 struct AuditLogInner {
     master: MasterLogKey,
     seg: Mutex<SegmentManager>,
+    /// v0.4 Sigillum AC #8 — cumulative segments opened since process
+    /// start (boot or first lazy `append()`). Monotonic. Polled by the
+    /// signer's metrics housekeeper to update `santuario_log_segments_total`.
+    segments_opened_total: std::sync::atomic::AtomicU64,
+    /// v0.4 Sigillum AC #8 — cumulative plaintext bytes fed into the
+    /// AEAD seal. Monotonic. Polled to update
+    /// `santuario_log_bytes_encrypted_total`.
+    bytes_encrypted_total: std::sync::atomic::AtomicU64,
 }
 
 struct SegmentManager {
@@ -120,6 +128,8 @@ impl AuditLog {
                     next_segment_id: next,
                     max_plaintext_bytes: DEFAULT_MAX_PLAINTEXT_BYTES,
                 }),
+                segments_opened_total: std::sync::atomic::AtomicU64::new(0),
+                bytes_encrypted_total: std::sync::atomic::AtomicU64::new(0),
             }),
         })
     }
@@ -159,12 +169,34 @@ impl AuditLog {
                     next_segment_id: next,
                     max_plaintext_bytes,
                 }),
+                segments_opened_total: std::sync::atomic::AtomicU64::new(0),
+                bytes_encrypted_total: std::sync::atomic::AtomicU64::new(0),
             }),
         })
     }
 
+    /// v0.4 Sigillum AC #8: cumulative segments opened since process start.
+    /// Monotonic. Read by the signer's metrics housekeeper.
+    pub fn segments_opened_total(&self) -> u64 {
+        self.inner
+            .segments_opened_total
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// v0.4 Sigillum AC #8: cumulative plaintext bytes sealed since process
+    /// start. Monotonic. Includes the JSON of every appended `AuditRecord`;
+    /// excludes per-record overhead and segment headers.
+    pub fn bytes_encrypted_total(&self) -> u64 {
+        self.inner
+            .bytes_encrypted_total
+            .load(std::sync::atomic::Ordering::Relaxed)
+    }
+
     pub fn append(&self, rec: &AuditRecord) -> Result<(), IntegrityError> {
+        use std::sync::atomic::Ordering;
+
         let json = serde_json::to_vec(rec)?;
+        let json_len = json.len() as u64;
         let mut mgr = self.inner.seg.lock().expect("audit log mutex poisoned");
 
         // Open active writer lazily so an AuditLog that is constructed
@@ -178,11 +210,19 @@ impl AuditLog {
                 mgr.max_plaintext_bytes,
             )?;
             mgr.active = Some(writer);
+            // v0.4 AC #8: a new segment file was just minted.
+            self.inner
+                .segments_opened_total
+                .fetch_add(1, Ordering::Relaxed);
         }
 
         // The unwrap is safe because we just ensured `active` is Some.
         let writer = mgr.active.as_mut().expect("active writer just initialized");
         writer.append(&json)?;
+        // v0.4 AC #8: count the just-sealed plaintext bytes.
+        self.inner
+            .bytes_encrypted_total
+            .fetch_add(json_len, Ordering::Relaxed);
 
         // If the segment just crossed the rotation threshold, finalize
         // it and bump the segment id. The next append() opens a fresh
@@ -494,5 +534,50 @@ mod tests {
         }
         let records = log.tail(usize::MAX).unwrap();
         assert_eq!(records.len(), 100);
+    }
+
+    // --- v0.4 Sigillum AC #8: monotonic metrics counters --------------------
+
+    #[test]
+    fn metrics_segments_total_starts_at_zero() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = AuditLog::ephemeral(dir.path().join("audit")).unwrap();
+        // No append yet -> no segment minted -> counter is zero.
+        assert_eq!(log.segments_opened_total(), 0);
+        assert_eq!(log.bytes_encrypted_total(), 0);
+    }
+
+    #[test]
+    fn metrics_segments_total_increments_on_first_append() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = AuditLog::ephemeral(dir.path().join("audit")).unwrap();
+        log.log_suspend("first").unwrap();
+        // First append lazily mints segment 0.
+        assert_eq!(log.segments_opened_total(), 1);
+        // bytes_encrypted_total counts the JSON of the appended record.
+        assert!(log.bytes_encrypted_total() > 0);
+    }
+
+    #[test]
+    fn metrics_segments_total_increments_on_rotation() {
+        let dir = tempfile::tempdir().unwrap();
+        // Small cap so multiple rotations happen.
+        let log = AuditLog::new_with_cap(
+            dir.path().join("audit"),
+            MasterLogKey::generate(),
+            200, // ~200 plaintext bytes per segment
+        )
+        .unwrap();
+        for i in 0..20 {
+            log.log_suspend(format!("rotate {i}")).unwrap();
+        }
+        // Each rotation opens a fresh segment; we expect at least 2.
+        assert!(
+            log.segments_opened_total() >= 2,
+            "segments_opened_total must reflect rotations, got {}",
+            log.segments_opened_total()
+        );
+        // Bytes encrypted is the sum of all serialised records.
+        assert!(log.bytes_encrypted_total() >= 200);
     }
 }

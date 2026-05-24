@@ -558,10 +558,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let metrics = Arc::new(MetricsRegistry::default());
 
     // Gauge housekeeper — refreshes `santuario_*_state` gauges every 5s.
+    // v0.4 Sigillum: also mirrors the AuditLog's internal monotonic counters
+    // into the registry so `santuario_log_segments_total` and
+    // `santuario_log_bytes_encrypted_total` are visible to the Admin RPC
+    // and the Prometheus exporter (sprint v0.4 AC #8).
     {
         let metrics = metrics.clone();
         let state = state.clone();
         let vault_sealed = vault_sealed.clone();
+        let audit_log = audit_log.clone();
         tokio::spawn(async move {
             let mut ticker = tokio::time::interval(Duration::from_secs(5));
             loop {
@@ -574,6 +579,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 let ready = if state.is_ready() { 1.0 } else { 0.0 };
                 metrics.set_gauge("santuario_vault_sealed", sealed);
                 metrics.set_gauge("santuario_signer_ready", ready);
+
+                // Sigillum AC #8 — mirror atomic counters from AuditLog.
+                metrics.set_counter(
+                    "santuario_log_segments_total",
+                    audit_log.segments_opened_total(),
+                );
+                metrics.set_counter(
+                    "santuario_log_bytes_encrypted_total",
+                    audit_log.bytes_encrypted_total(),
+                );
             }
         });
     }

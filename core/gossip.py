@@ -79,6 +79,12 @@ class AeternaGossipNet:
         seen_cache_size: int = 10_000,
         rendezvous_hints: Iterable[RendezvousHint] = (),
         on_message: Callable[[dict], None] | None = None,
+        # v0.4 Sigillum AC #4: optional counter-increment hook so the
+        # gossip layer can report `aeterna_gossip_rejected_unencrypted_total`
+        # and related drop reasons without depending on MetricsContributor
+        # directly. Sentinel wires this to its own metrics. Tests pass
+        # None and the layer becomes a no-op.
+        metrics_hook: Callable[[str], None] | None = None,
     ) -> None:
         self.guardian_id = guardian_id
         self.bind_host = bind_host
@@ -91,6 +97,7 @@ class AeternaGossipNet:
         # to disable it for local debugging they must construct an
         # ephemeral cipher with a random root key, NOT pass None.
         self.cipher = cipher
+        self._metrics_hook = metrics_hook
 
         self.peer_table = PeerTable(max_age_seconds=120)
         for peer_host, peer_port in bootstrap_peers:
@@ -154,6 +161,21 @@ class AeternaGossipNet:
     def add_peer(self, host: str, port: int) -> None:
         if (host, port) != (self.bind_host, self.port):
             self.peer_table.add_or_update(host, port)
+
+    def _incr_metric(self, name: str) -> None:
+        """Forward a counter increment to the optional metrics hook.
+
+        v0.4 Sigillum: the gossip layer is the source of truth for
+        `aeterna_gossip_rejected_unencrypted_total` (AC #4) and
+        `aeterna_gossip_rejected_authfail_total`. The hook is None in
+        tests; the Sentinel wires it to its MetricsContributor.
+        """
+        if self._metrics_hook is None:
+            return
+        try:
+            self._metrics_hook(name)
+        except Exception:  # noqa: BLE001 — metrics must never crash gossip
+            LOG.exception("metrics hook raised on %s", name)
 
     # ------------------------------------------------------------------
     # Internals
@@ -234,6 +256,9 @@ class AeternaGossipNet:
                 try:
                     rv_envelope = json.loads(data.decode("utf-8"))
                 except (UnicodeDecodeError, json.JSONDecodeError):
+                    # Neither Sigillum nor rendezvous JSON -- this is a
+                    # pre-v0.4 plaintext peer or noise. AC #4: count it.
+                    self._incr_metric("aeterna_gossip_rejected_unencrypted_total")
                     LOG.warning("dropped non-Sigillum non-JSON datagram from %s", addr)
                     continue
                 if is_rendezvous_peers_packet(rv_envelope):
@@ -242,6 +267,9 @@ class AeternaGossipNet:
                     ):
                         self.peer_table.add_or_update(host, port, guardian_id)
                     continue
+                # Rendezvous-shaped but not actually a peers packet --
+                # still plaintext gossip from a stale peer, AC #4 counts it.
+                self._incr_metric("aeterna_gossip_rejected_unencrypted_total")
                 LOG.warning(
                     "dropped plaintext non-rendezvous datagram from %s -- "
                     "either pre-v0.4 peer or noise",
@@ -253,6 +281,7 @@ class AeternaGossipNet:
                 # evicted session. Drop silently AND do NOT add the
                 # source to the peer table -- otherwise an attacker
                 # spamming garbage UDP would pollute peer discovery.
+                self._incr_metric("aeterna_gossip_rejected_authfail_total")
                 LOG.warning("dropped undecryptable Sigillum datagram from %s", addr)
                 continue
             except (UnicodeDecodeError, json.JSONDecodeError):

@@ -128,9 +128,9 @@ aeterna-protocol/
 | `v0.1.0` | Rust Santuario with `llama.cpp` LLM subprocess + encrypted IPC |
 | `v0.2.0` | ✅ Santuario sovereignty kernel: TPM2 vault, seccomp-bpf, critic loop, α/β/γ watchdog (Custos) |
 | `v0.3.0` | ✅ **Oculus** — operator observability triad: Admin gRPC + Streamlit War Room + Telegram bot + Prometheus exporter + OPERATOR-RUNBOOK |
-| `v0.4.0` | **Sigillum** — log confidentiality: ChaCha20-Poly1305 over the audit log, HKDF per-session keys for gossip, Double-Ratchet rotation between operator endpoints |
-| `v0.5.0` | CosmWasm smart contracts + IBC testnet + IPFS cold storage |
-| `v1.0.0` | Firecracker micro-VM isolation + Bitcoin `OP_RETURN` anchoring + public mainnet |
+| `v0.4.0` | ✅ **Sigillum** — log confidentiality: ChaCha20-Poly1305 encrypted audit log, HKDF per-session keys for gossip, X3DH-lite ratchet for operator endpoints, BIP-39 key management |
+| `v0.5.0` | **Consensus** — Cosmos SDK `x/guardian` + CosmWasm `aeterna_oracle` + IBC testnet, IPFS cold storage, remote log shipper, multi-operator Shamir quorum |
+| `v1.0.0` | **Sovereign** — Firecracker / gVisor isolation, hardware key support (YubiKey + WebAuthn), post-quantum re-key channel, Bitcoin `OP_RETURN` anchoring, public mainnet |
 
 ## License
 

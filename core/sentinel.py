@@ -228,6 +228,10 @@ class Sentinel:
             ttl=self.cfg.gossip_ttl,
             rendezvous_hints=self.cfg.rendezvous_hints,
             on_message=self._on_gossip,
+            # v0.4 Sigillum AC #4: route the gossip-layer drop counters
+            # into the MetricsContributor so they appear in the snapshot
+            # file the Admin gRPC merges (admin.proto §sentinel_metrics).
+            metrics_hook=self._metrics.incr,
         )
         self._gossip.start()
         LOG.info("gossip bound on :%d (fanout=%d, ttl=%d, peers=%d)",
