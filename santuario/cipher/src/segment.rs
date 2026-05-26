@@ -80,6 +80,30 @@ pub struct SegmentHeader {
     pub master_key_id: MasterKeyId,
 }
 
+impl SegmentHeader {
+    /// Parse the 40-byte segment-file header. Used by external readers
+    /// (the v0.5 shipper, forensic tools) that need the segment id
+    /// without going through `LogSegmentReader::open` — i.e. without
+    /// holding the master key.
+    pub fn from_bytes(buf: &[u8]) -> Result<Self> {
+        if buf.len() < HEADER_LEN {
+            return Err(Error::InvalidMagic);
+        }
+        if &buf[..SEGMENT_MAGIC.len()] != SEGMENT_MAGIC.as_slice() {
+            return Err(Error::InvalidMagic);
+        }
+        let mut id_bytes = [0u8; 8];
+        id_bytes.copy_from_slice(&buf[16..24]);
+        let segment_id = u64::from_be_bytes(id_bytes);
+        let mut key_id_bytes = [0u8; 16];
+        key_id_bytes.copy_from_slice(&buf[24..40]);
+        Ok(Self {
+            segment_id,
+            master_key_id: MasterKeyId(key_id_bytes),
+        })
+    }
+}
+
 // =============================================================================
 // Writer
 // =============================================================================

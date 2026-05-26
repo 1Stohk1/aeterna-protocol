@@ -43,5 +43,6 @@ pub mod segment;
 pub use error::{Error, Result};
 pub use keys::{MasterKeyId, MasterLogKey, SegmentSubKey};
 pub use segment::{
-    LogSegmentReader, LogSegmentWriter, SegmentHeader, DEFAULT_MAX_PLAINTEXT_BYTES, SEGMENT_MAGIC,
+    LogSegmentReader, LogSegmentWriter, SegmentHeader, DEFAULT_MAX_PLAINTEXT_BYTES, HEADER_LEN,
+    SEGMENT_MAGIC,
 };

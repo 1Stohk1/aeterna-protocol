@@ -1,0 +1,38 @@
+[package]
+name        = "santuario-shipper"
+description = "Sprint v0.5.0 'Consensus' Phase D — remote shipper for encrypted .sigillum audit-log segments. Pushes finalized segments to an operator-controlled HTTP(S) endpoint with cert-pin verification."
+version.workspace      = true
+edition.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[dependencies]
+# v0.4 envelope re-use. The shipper does NOT re-encrypt segment payloads —
+# Sigillum Phase A's ChaCha20-Poly1305 sealing is already authenticated and
+# confidential. The shipper relies on cipher's segment header parsing so it
+# can extract the segment_id for the remote URL path.
+santuario-cipher   = { path = "../cipher" }
+
+# Serde / config
+serde       = { workspace = true }
+serde_json  = { workspace = true }
+toml        = { workspace = true }
+
+# Errors / logging
+thiserror   = { workspace = true }
+log         = { workspace = true }
+
+# Filesystem helpers (segment dir walk).
+walkdir     = { workspace = true }
+
+# Hex (cert pin formatting in error messages + tests).
+hex         = { workspace = true }
+
+[dev-dependencies]
+tempfile    = { workspace = true }
+
+[lib]
+name = "santuario_shipper"
+path = "src/lib.rs"

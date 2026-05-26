@@ -8,6 +8,7 @@ members = [
     "exporter",
     "cipher",
     "ratchet",
+    "shipper",
 ]
 resolver = "2"
 
