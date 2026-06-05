@@ -163,28 +163,78 @@ class NeuroplasticNode:
         self.local_anchors_history = None
         self.shared_anchors_history = None
 
-    def initialize_calibration(self, local_anchors: np.ndarray, shared_anchors: np.ndarray):
+        # Self-calibrating immunology parameters
+        self.pre_threshold = 0.35
+        self.subspace_threshold = 0.15
+        self.novelty_threshold = 0.75
+        self.k_factor = 3.5
+
+    def sediment_thresholds(self):
         """
-        Initial calibration of the aligner. Saves history.
+        Calculates and updates dynamic immunology thresholds based on the statistics of reference anchors.
+        """
+        if self.shared_anchors_history is None or self.shared_anchors_history.shape[0] == 0:
+            return
+
+        pre_errors = []
+        subspace_errors = []
+
+        for v_omega in self.shared_anchors_history:
+            # Reconstruct and re-project to calculate PRE
+            reconstructed = self.aligner.reconstruct(v_omega)
+            reprojected = self.aligner.project(reconstructed)
+            pre = float(np.linalg.norm(v_omega.flatten() - reprojected.flatten()))
+            pre_errors.append(pre)
+
+            # Calculate Subspace Error
+            sub_err = 0.0
+            if self.projection_basis is not None:
+                v_flat = v_omega.flatten()
+                proj_v = np.dot(np.dot(v_flat, self.projection_basis.T), self.projection_basis)
+                sub_err = float(np.linalg.norm(v_flat - proj_v))
+            subspace_errors.append(sub_err)
+
+        # Statistical dynamic threshold calculation (mean + k * std)
+        mean_pre = np.mean(pre_errors)
+        std_pre = np.std(pre_errors)
+        # We enforce a floor to prevent thresholds from collapsing to zero on clean mock data
+        self.pre_threshold = max(0.20, float(mean_pre + self.k_factor * std_pre))
+
+        mean_sub = np.mean(subspace_errors)
+        std_sub = np.std(subspace_errors)
+        self.subspace_threshold = max(0.15, float(mean_sub + self.k_factor * std_sub))
+
+    def initialize_calibration(self, local_anchors: np.ndarray, shared_anchors: np.ndarray, k_factor: float = 3.5):
+        """
+        Initial calibration of the aligner. Saves history and starts dynamic self-calibration.
         """
         self.local_anchors_history = local_anchors.copy()
         self.shared_anchors_history = shared_anchors.copy()
-        return self.aligner.calibrate(local_anchors, shared_anchors)
+        self.k_factor = k_factor
+        
+        rmse = self.aligner.calibrate(local_anchors, shared_anchors)
+        self.sediment_thresholds()
+        return rmse
 
-    def process_input(self, vector_omega: np.ndarray, threshold: float = 0.35, novelty_threshold: float = 0.75) -> tuple[str, str, float, float]:
+    def process_input(self, vector_omega: np.ndarray, threshold: float = None, novelty_threshold: float = None) -> tuple[str, str, float, float]:
         """
         Processes an incoming concept vector from the network.
         Runs immunology check, and either accepts/routes it or triggers sprouting.
         
         Args:
             vector_omega: Input vector in shared Omega space.
-            threshold: Immunology PRE threshold (max acceptable reconstruction error).
-            novelty_threshold: Similarity threshold below which a concept is sprouted as a new expert.
+            threshold: Optional override for PRE immunology threshold.
+            novelty_threshold: Optional override for novelty expert routing threshold.
             
         Returns:
             Tuple: (status, expert_id_or_quarantine, pre_error, metric)
             Status can be: "ROUTE_SUCCESS", "SPROUTED", "REJECTED_SPAM"
         """
+        if threshold is None:
+            threshold = self.pre_threshold
+        if novelty_threshold is None:
+            novelty_threshold = self.novelty_threshold
+
         # 1. Compute Projection Reconstruction Error (PRE)
         reconstructed = self.aligner.reconstruct(vector_omega)
         reprojected = self.aligner.project(reconstructed)
@@ -206,14 +256,13 @@ class NeuroplasticNode:
         # 3. Anomaly detected (pre > threshold). Check if it lies in the valid anchor subspace.
         subspace_err = 1.0
         if self.projection_basis is not None:
-            # Project vector_omega onto the orthogonal subspace basis (projection_basis is D_intrinsic x D)
-            # v_proj = v * basis.T * basis
+            # Project vector_omega onto the orthogonal subspace basis
             v_flat = vector_omega.flatten()
             proj_v = np.dot(np.dot(v_flat, self.projection_basis.T), self.projection_basis)
             subspace_err = float(np.linalg.norm(v_flat - proj_v))
 
         # If it lies in the valid anchor subspace, it's a valid but OOD concept. Trigger Sprouting!
-        if subspace_err <= 0.15:
+        if subspace_err <= self.subspace_threshold:
             expert_id = self.sprout(vector_omega)
             return "SPROUTED", expert_id, pre, subspace_err
         else:
@@ -245,7 +294,28 @@ class NeuroplasticNode:
             self.local_anchors_history = np.vstack([self.local_anchors_history, local_concept])
             self.shared_anchors_history = np.vstack([self.shared_anchors_history, v_flat])
             
-            # Recalibrate aligner with expanded anchor set
+            # Recalibrate aligner with expanded anchor set (thresholds are not sedimented here)
             self.aligner.calibrate(self.local_anchors_history, self.shared_anchors_history)
 
         return expert_name
+
+    def assimilate_expert(self, expert_id: str, centroid_omega: np.ndarray):
+        """
+        Assimilates a shared expert from another node.
+        Adds the expert to the semantic router and recalibrates local projection.
+        """
+        v_flat = centroid_omega.reshape(1, -1)
+        
+        # 1. Add to local router
+        self.router.add_expert(expert_id, v_flat)
+        
+        # 2. Simulate local representation mapping
+        local_concept = np.dot(v_flat, self.true_transform) + np.random.normal(0, 0.02, (1, self.aligner.local_dim))
+        
+        # 3. Append to calibration history, recalibrate, but do not sediment thresholds
+        if self.local_anchors_history is not None:
+            self.local_anchors_history = np.vstack([self.local_anchors_history, local_concept])
+            self.shared_anchors_history = np.vstack([self.shared_anchors_history, v_flat])
+            self.aligner.calibrate(self.local_anchors_history, self.shared_anchors_history)
+
+

@@ -59,6 +59,9 @@ from core.poc import (
 from core.santuario_client import SantuarioClient
 from core.handshake import build_peer_announce, verify_peer_announce
 from core.trust_score import TrustScoreBook
+import numpy as np
+from core.knowledge_sharing import verify_expert_share_message
+
 
 LOG = logging.getLogger("aeterna.sentinel")
 
@@ -162,6 +165,7 @@ class Sentinel:
         self._public_key: bytes | None = None
         self._running = False
         self._last_announce_ts: float = 0.0
+        self._last_entropy_sync_ts: float = 0.0
 
         self._task_queue: list[dict[str, Any]] = []
         self._poc_queue: list[dict[str, Any]] = []
@@ -176,6 +180,8 @@ class Sentinel:
         self._bootstrap_addrs: set[str] = {
             f"udp://{h}:{p}" for (h, p) in self.cfg.bootstrap_peers
         }
+        self.cognitive_node = None
+
 
     # ------------------------------------------------------------------
     # Boot sequence — Axiom I, II, III
@@ -237,6 +243,8 @@ class Sentinel:
         LOG.info("gossip bound on :%d (fanout=%d, ttl=%d, peers=%d)",
                  self.cfg.gossip_port, self.cfg.gossip_fanout,
                  self.cfg.gossip_ttl, len(self.cfg.bootstrap_peers))
+        
+        self._initialize_cognitive_node()
 
     def _verify_ethics_consent(self) -> None:
         """Hard boot gate — Sovranità Finale.
@@ -272,8 +280,8 @@ class Sentinel:
     def _check_gpu(self) -> None:
         try:
             import torch  # type: ignore[import-not-found]
-        except ImportError:
-            LOG.warning("torch not installed — running in CPU-degraded mode")
+        except (ImportError, Exception) as exc:
+            LOG.warning("Failed to import torch (%s) — running in CPU-degraded mode", exc)
             return
         if not torch.cuda.is_available():
             LOG.warning("CUDA unavailable — running in CPU-degraded mode")
@@ -308,6 +316,11 @@ class Sentinel:
                 self._broadcast_announce()
                 self._last_announce_ts = now
                 self._metrics.incr("aeterna_peer_announce_tx_total")
+
+            # Periodic Anti-Entropy Sync
+            if now - self._last_entropy_sync_ts > 10.0:
+                self._send_entropy_digest()
+                self._last_entropy_sync_ts = now
 
             self._process_next_poc_validation()
 
@@ -581,6 +594,61 @@ class Sentinel:
                 delta,
                 self._trust_scores.get(producer_id),
             )
+        elif kind == "expert_share":
+            valid, reason = verify_expert_share_message(message, self._santuario)
+            if not valid:
+                LOG.warning("invalid expert_share dropped: %s", reason)
+                return
+
+            payload = message.get("payload", {})
+            expert_id = payload.get("expert_id")
+            centroid_list = payload.get("centroid", [])
+            creator_node_id = payload.get("creator_node_id", "unknown")
+            
+            LOG.info(
+                "expert_share received and verified from %s for expert %s",
+                creator_node_id,
+                expert_id,
+            )
+            
+            if hasattr(self, "cognitive_node") and self.cognitive_node is not None:
+                centroid_omega = np.array(centroid_list)
+                self.cognitive_node.assimilate_expert(expert_id, centroid_omega)
+                LOG.info("local cognitive node assimilated expert %s", expert_id)
+        elif kind == "semantic_input":
+            payload = message.get("payload", {})
+            vector_list = payload.get("vector")
+            sender_id = payload.get("sender_id", "unknown")
+            
+            if vector_list and self.cognitive_node is not None:
+                vector_omega = np.array(vector_list)
+                LOG.info("Received semantic_input gossip from %s. Processing through local cognitive node...", sender_id)
+                status, result, pre, metric = self.process_semantic_vector(vector_omega)
+                LOG.info("Semantic input processing completed: status=%s, expert=%s, pre=%.4f", status, result, pre)
+        elif kind == "entropy_digest":
+            payload = message.get("payload", {})
+            bloom_b64 = payload.get("bloom_filter")
+            sender_id = payload.get("sender_id", "unknown")
+            
+            if bloom_b64 and self._gossip and peer_addr:
+                from core.bloom_filter import BloomFilter
+                try:
+                    remote_bf = BloomFilter.from_base64(bloom_b64, size_bits=512, num_hashes=7)
+                except Exception as exc:
+                    LOG.warning("Failed to parse remote Bloom Filter: %s", exc)
+                    return
+                
+                # Check our local cached messages. For any message B has but is not in A's Bloom Filter, push it directly to A.
+                pushed_count = 0
+                for mid, cached_envelope in list(self._gossip._msg_body_cache.items()):
+                    if mid not in remote_bf:
+                        LOG.info("Pushing missing message %s to %s via direct Anti-Entropy push", mid[:12], sender_id)
+                        original_body = cached_envelope.get("body", {})
+                        self._gossip.send_direct_message(peer_addr[0], peer_addr[1], original_body)
+                        pushed_count += 1
+                        if pushed_count >= 5:  # Cap direct pushes per cycle to prevent rate-limit flooding
+                            break
+
 
     def _verify_peer_block(self, payload: dict[str, Any]) -> tuple[bool, str]:
         if self._santuario is None:
@@ -623,6 +691,128 @@ class Sentinel:
             return False, "invalid cryptographic signature"
 
         return True, "ok"
+
+    def _send_entropy_digest(self) -> None:
+        if not self._gossip:
+            return
+            
+        active_peers = self._gossip.peer_table.get_active_peers()
+        if not active_peers:
+            return
+            
+        import random
+        from core.bloom_filter import BloomFilter
+        
+        target_peer = random.choice(list(active_peers))
+        
+        recent_mids = self._gossip.get_recent_mids(limit=30)
+        if not recent_mids:
+            return
+            
+        # Build Bloom Filter representing our seen cache
+        bf = BloomFilter(size_bits=512, num_hashes=7)
+        for mid in recent_mids:
+            bf.add(mid)
+            
+        msg = {
+            "kind": "entropy_digest",
+            "payload": {
+                "sender_id": self.cfg.guardian_id,
+                "bloom_filter": bf.to_base64()
+            }
+        }
+        
+        LOG.debug("Sending entropy_digest (Bloom Filter) to peer %s:%d representing %d mids", target_peer[0], target_peer[1], len(recent_mids))
+        self._gossip.send_direct_message(target_peer[0], target_peer[1], msg)
+
+    def _initialize_cognitive_node(self) -> None:
+        """
+        Initializes the Rosetta Stone NeuroplasticNode inside Sentinel.
+        Parses nucleo configuration and calibrates the local aligner.
+        """
+        nucleo_cfg = self.cfg.raw.get("nucleo", {})
+        if not nucleo_cfg.get("reflexive_enabled", True):
+            LOG.info("Cognitive node is disabled in configuration.")
+            return
+
+        D_shared = 64
+        D_intrinsic = 20
+        num_anchors = 100
+
+        from core.llm_client import OllamaClient
+        from core.rosetta import NeuroplasticNode
+
+        # Check if Ollama is available to determine semantic dimensionality
+        model_name = self.cfg.raw.get("santuario", {}).get("llm", {}).get("model_name", "nomic-embed-text")
+        if "nomic" not in model_name.lower():
+            model_name = "nomic-embed-text"
+
+        client = OllamaClient(model=model_name)
+        use_real = False
+        try:
+            if client.is_healthy() and client.is_model_available():
+                use_real = True
+                LOG.info("Ollama is healthy. Initializing cognitive node with 768-dim embeddings.")
+        except Exception:
+            pass
+
+        # Deterministic initialization of shared Omega space based on network ID
+        network_id = self.cfg.raw.get("identity", {}).get("network", "aeterna-testnet-0")
+        seed_shared = int(hashlib.md5(network_id.encode("utf-8")).hexdigest(), 16) % (2**32)
+        rng_shared = np.random.default_rng(seed_shared)
+
+        projection_basis = rng_shared.normal(0, 1, (D_intrinsic, D_shared))
+        q_proj, _ = np.linalg.qr(projection_basis.T)
+        projection_matrix = q_proj.T
+
+        d_local = 768 if use_real else 256
+        latent_anchors = rng_shared.normal(0, 1, (num_anchors, D_intrinsic))
+        Omega_anchors = np.dot(latent_anchors, projection_matrix)
+        Omega_anchors /= np.linalg.norm(Omega_anchors, axis=1, keepdims=True)
+
+        # Local model distortion is specific to this guardian's model configuration
+        seed_local = int(hashlib.md5(self.cfg.guardian_id.encode("utf-8")).hexdigest(), 16) % (2**32)
+        rng_local = np.random.default_rng(seed_local)
+
+        true_transform = rng_local.normal(0, 1, (D_shared, d_local))
+        true_transform /= np.linalg.norm(true_transform, axis=0)
+
+        local_noise = rng_local.normal(0, 0.05, (num_anchors, d_local))
+        local_anchors = np.dot(Omega_anchors, true_transform) + local_noise
+
+        self.cognitive_node = NeuroplasticNode(
+            name=self.cfg.guardian_id,
+            shared_dim=D_shared,
+            local_dim=d_local,
+            true_transform=true_transform,
+            projection_basis=projection_matrix
+        )
+        self.cognitive_node.initialize_calibration(local_anchors, Omega_anchors)
+        LOG.info("Rosetta cognitive node '%s' successfully calibrated and active (d=%d).", self.cfg.guardian_id, d_local)
+
+    def process_semantic_vector(self, vector_omega: np.ndarray) -> tuple[str, str, float, float]:
+        """
+        Routes and processes an incoming semantic vector vector_omega.
+        If a sprout event is triggered, broadcasts the newly formed expert P2P.
+        """
+        if self.cognitive_node is None:
+            return "NO_COGNITIVE_NODE", "default", 0.0, 0.0
+
+        status, result, pre, metric = self.cognitive_node.process_input(vector_omega)
+
+        if status == "SPROUTED":
+            LOG.info("Local sprouting triggered for expert '%s'. Broadcasting P2P expert_share.", result)
+            from core.knowledge_sharing import build_expert_share_message
+            msg = build_expert_share_message(
+                expert_id=result,
+                centroid_omega=vector_omega,
+                node_id=self.cfg.guardian_id,
+                santuario_client=self._santuario
+            )
+            if self._gossip:
+                self._gossip.gossip(msg)
+
+        return status, result, pre, metric
 
     # ------------------------------------------------------------------
     # Misc

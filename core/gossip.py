@@ -109,6 +109,10 @@ class AeternaGossipNet:
         self._seen_set: set[str] = set()
         self._last_rendezvous_register_ts = 0.0
 
+        # Cache of recently processed message envelopes (for retransmissions in Anti-Entropy)
+        self._msg_body_cache: dict[str, dict] = {}
+        self._msg_body_order: deque[str] = deque(maxlen=200)
+
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self._sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         self._sock.bind((bind_host, self.port))
@@ -153,7 +157,7 @@ class AeternaGossipNet:
         raw = json.dumps(envelope, sort_keys=True).encode("utf-8")
         mid = sha256(raw).hexdigest()
         envelope["mid"] = mid
-        self._remember(mid)
+        self._remember(mid, envelope)
         self._maybe_register_rendezvous()
         self._relay(envelope)
         return mid
@@ -161,6 +165,34 @@ class AeternaGossipNet:
     def add_peer(self, host: str, port: int) -> None:
         if (host, port) != (self.bind_host, self.port):
             self.peer_table.add_or_update(host, port)
+
+    def get_recent_mids(self, limit: int = 15) -> list[str]:
+        """
+        Returns the hashes of the most recently seen messages.
+        """
+        return list(self._seen)[-limit:]
+
+    def send_direct_message(self, host: str, port: int, message: dict) -> None:
+        """
+        Sends a Sigillum-sealed message directly to a target peer.
+        """
+        if self._stop.is_set():
+            return
+            
+        envelope = {
+            "src": self.guardian_id,
+            "ts": int(time.time()),
+            "ttl": 1,  # Direct transmission, no further relaying hops
+            "body": message,
+        }
+        
+        plaintext = json.dumps(envelope, sort_keys=True).encode("utf-8")
+        try:
+            wire = self.cipher.seal(plaintext)
+            self._sock.sendto(wire, (host, port))
+        except OSError as exc:
+            if not self._stop.is_set():
+                LOG.warning("Direct send to %s:%d failed: %s", host, port, exc)
 
     def _incr_metric(self, name: str) -> None:
         """Forward a counter increment to the optional metrics hook.
@@ -180,7 +212,7 @@ class AeternaGossipNet:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
-    def _remember(self, mid: str) -> bool:
+    def _remember(self, mid: str, envelope: dict | None = None) -> bool:
         if mid in self._seen_set:
             return False
         self._seen.append(mid)
@@ -188,6 +220,14 @@ class AeternaGossipNet:
         # Keep the set trimmed to the deque window.
         if len(self._seen_set) > self._seen.maxlen:  # type: ignore[operator]
             self._seen_set = set(self._seen)
+
+        if envelope is not None:
+            self._msg_body_cache[mid] = envelope
+            self._msg_body_order.append(mid)
+            if len(self._msg_body_cache) > self._msg_body_order.maxlen:  # type: ignore[operator]
+                oldest = self._msg_body_order.popleft()
+                self._msg_body_cache.pop(oldest, None)
+
         return True
 
     def _relay(self, envelope: dict) -> None:
@@ -293,7 +333,7 @@ class AeternaGossipNet:
             assert envelope is not None and plaintext_for_mid is not None
             mid = envelope.get("mid") or sha256(plaintext_for_mid).hexdigest()
 
-            if not self._remember(mid):
+            if not self._remember(mid, envelope):
                 continue  # duplicate -- already relayed
 
             # Opportunistic peer discovery. With UDP, the source port

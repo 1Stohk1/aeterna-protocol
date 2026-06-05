@@ -26,11 +26,16 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import sys
 import time
 from typing import Optional
 
 import streamlit as st
 from streamlit_autorefresh import st_autorefresh
+
+# Ensure root directory is in path for core imports
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..")))
+from core.llm_client import OllamaClient
 
 from client import (  # type: ignore[import-not-found]
     AdminObserver,
@@ -213,7 +218,7 @@ _render_banner()
 
 # --- tabs ------------------------------------------------------------------
 
-tab_metrics, tab_peers, tab_audit = st.tabs(["Metrics", "Peers", "Audit"])
+tab_metrics, tab_peers, tab_audit, tab_chat = st.tabs(["Metrics", "Peers", "Audit", "Model Chat"])
 
 
 # --- Metrics tab -----------------------------------------------------------
@@ -378,3 +383,85 @@ with tab_audit:
                     except (ValueError, TypeError):
                         pretty = line.json
                     st.code(pretty, language="json")
+
+
+# --- Model Chat tab --------------------------------------------------------
+
+with tab_chat:
+    st.subheader("💬 AETERNA Local Model Chat")
+    st.caption(
+        "Interazione diretta con il modello LLM locale di AETERNA (llama3.2). "
+        "Consigliato: attiva il toggle 'Pause polling' nella barra laterale per evitare interruzioni."
+    )
+
+    client = OllamaClient(base_url="http://localhost:11434", model="llama3.2")
+
+    if not client.is_healthy():
+        st.error(
+            "Il demone Ollama non risponde all'indirizzo http://localhost:11434.",
+            icon="🔌"
+        )
+        st.markdown(
+            "### Come avviare Ollama:\n"
+            "1. Assicurati che Ollama sia installato sul tuo sistema.\n"
+            "2. Apri un terminale ed esegui:\n"
+            "   ```powershell\n"
+            "   ollama serve\n"
+            "   ```\n"
+            "3. Ricarica questa pagina."
+        )
+    elif not client.is_model_available():
+        st.warning(
+            f"Il modello '{client.model}' non è caricato/scaricato in Ollama.",
+            icon="⚠️"
+        )
+        st.markdown(
+            f"### Come scaricare il modello:\n"
+            f"1. Apri un terminale ed esegui:\n"
+            f"   ```powershell\n"
+            f"   ollama pull {client.model}\n"
+            f"   ```\n"
+            f"2. Attendi il completamento del download e ricarica questa pagina."
+        )
+    else:
+        col_system, col_clear = st.columns([4, 1])
+        with col_system:
+            system_prompt = st.text_input(
+                "System Prompt di AETERNA",
+                value="Sei AETERNA, un'intelligenza artificiale cooperativa per l'analisi dei dati scientifici e crittografici.",
+                help="Configura il comportamento e le istruzioni di sistema per il modello."
+            )
+        with col_clear:
+            st.write("") # Spacer to align button
+            st.write("") # Spacer to align button
+            if st.button("Clear History", use_container_width=True):
+                st.session_state.chat_messages = []
+                st.rerun()
+
+        # Initialize chat history
+        if "chat_messages" not in st.session_state:
+            st.session_state.chat_messages = []
+
+        # Display chat messages from history on app rerun
+        for msg in st.session_state.chat_messages:
+            with st.chat_message(msg["role"]):
+                st.markdown(msg["content"])
+
+        # React to user input
+        if user_prompt := st.chat_input("Scrivi un messaggio per AETERNA..."):
+            # Display user message in chat message container
+            st.chat_message("user").markdown(user_prompt)
+            # Add user message to chat history
+            st.session_state.chat_messages.append({"role": "user", "content": user_prompt})
+
+            # Display assistant response in chat message container
+            with st.chat_message("assistant"):
+                with st.spinner("Generazione risposta in corso..."):
+                    try:
+                        response = client.generate(prompt=user_prompt, system=system_prompt)
+                        st.markdown(response)
+                        # Add assistant response to chat history
+                        st.session_state.chat_messages.append({"role": "assistant", "content": response})
+                    except Exception as e:
+                        st.error(f"Errore durante la generazione della risposta: {e}")
+            st.rerun()
