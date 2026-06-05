@@ -4,11 +4,11 @@ import numpy as np
 
 # Adjust path to import core.rosetta
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from core.rosetta import RosettaAligner
+from core.rosetta import RosettaAligner, SemanticRouter, NeuroplasticNode
 
 def main():
     print("======================================================================")
-    print("AETERNA PROTOCOL - SEMANTIC ALIGNMENT & IMMUNOLOGY SIMULATION")
+    print("AETERNA PROTOCOL - NEUROPLASTIC NODE SIMULATION (ROUTING & SPROUTING)")
     print("======================================================================")
     
     np.random.seed(42)
@@ -20,7 +20,7 @@ def main():
     
     print(f"\n[1] Inizializzazione dello Spazio di Ancoraggio Omega (Dimensioni: {D_shared}, Intrinseca: {D_intrinsic})")
     
-    # Generate low-rank shared anchors using an orthogonal projection matrix
+    # Generate low-rank shared anchors using an orthogonal projection basis
     latent_anchors = np.random.randn(num_anchors, D_intrinsic)
     projection_basis = np.random.randn(D_intrinsic, D_shared)
     q_proj, _ = np.linalg.qr(projection_basis.T)
@@ -30,158 +30,132 @@ def main():
     Omega_anchors = np.dot(latent_anchors, projection_matrix)
     Omega_anchors /= np.linalg.norm(Omega_anchors, axis=1, keepdims=True)
     
-    # 2. CREATE A MULTI-NODE NETWORK MESH
-    # We define 5 honest nodes with asymmetric internal dimensionalities
-    node_configs = [
-        {"name": "Osservatore-A", "dim": 128},
-        {"name": "Guardiano-B",   "dim": 256},
-        {"name": "Saggio-C",      "dim": 512},
-        {"name": "Architetto-D",  "dim": 384},
-        {"name": "Sentinel-E",   "dim": 192}
-    ]
+    # 2. INSTANTIATE NEUROPLASTIC NODE
+    d_local = 256
+    print(f"\n[2] Creazione e calibrazione del nodo neuroplastico 'Guardiano-B' (d={d_local})...")
     
-    nodes = []
-    print(f"\n[2] Calibrazione locale di {len(node_configs)} nodi asimmetrici...")
+    true_transform = np.random.randn(D_shared, d_local)
+    true_transform /= np.linalg.norm(true_transform, axis=0)
     
-    for idx, config in enumerate(node_configs):
-        name = config["name"]
-        d_local = config["dim"]
-        
-        # Instantiate Rosetta aligner for this node
-        aligner = RosettaAligner(shared_dim=D_shared, local_dim=d_local)
-        
-        # Generate a unique distortion transformation for this node's internal model
-        true_transform = np.random.randn(D_shared, d_local)
-        true_transform /= np.linalg.norm(true_transform, axis=0) # Normalize columns
-        
-        # Node's local representations of the anchors, adding unique pretraining noise
-        local_noise = np.random.normal(0, 0.05, (num_anchors, d_local))
-        local_anchors = np.dot(Omega_anchors, true_transform) + local_noise
-        
-        # Calibrate the node's local projection matrix W
-        rmse = aligner.calibrate(local_anchors, Omega_anchors)
-        
-        nodes.append({
-            "name": name,
-            "aligner": aligner,
-            "true_transform": true_transform,
-            "rmse": rmse
-        })
-        print(f"  -> Nodo {idx} [{name}] (d={d_local}): Calibrazione completata (RMSE: {rmse:.4f})")
+    local_noise = np.random.normal(0, 0.05, (num_anchors, d_local))
+    local_anchors = np.dot(Omega_anchors, true_transform) + local_noise
+    
+    # Create the neuroplastic node with our subspace basis
+    node = NeuroplasticNode(
+        name="Guardiano-B", 
+        shared_dim=D_shared, 
+        local_dim=d_local, 
+        true_transform=true_transform, 
+        projection_basis=projection_matrix
+    )
+    
+    # Initialize calibration
+    init_rmse = node.initialize_calibration(local_anchors, Omega_anchors)
+    print(f"    - Calibrazione iniziale completata. RMSE: {init_rmse:.4f}")
+    
+    # 3. CONFIGURE INITIAL EXPERTS
+    # We seed the node with two default semantic categories
+    print("\n[3] Configurazione delle categorie semantiche iniziali (Esperti)...")
+    
+    # Expert 1: Oncology (Centered in a specific subspace direction)
+    latent_oncology = np.random.randn(1, D_intrinsic)
+    oncology_centroid = np.dot(latent_oncology, projection_matrix)
+    oncology_centroid /= np.linalg.norm(oncology_centroid)
+    node.router.add_expert("Oncologia", oncology_centroid)
+    print("    - Aggiunto esperto: 'Oncologia'")
+    
+    # Expert 2: Folding Math
+    latent_folding = np.random.randn(1, D_intrinsic)
+    folding_centroid = np.dot(latent_folding, projection_matrix)
+    folding_centroid /= np.linalg.norm(folding_centroid)
+    node.router.add_expert("HP-Folding", folding_centroid)
+    print("    - Aggiunto esperto: 'HP-Folding'")
 
-    # 3. SEMANTIC GOSSIP (CONCEPT PROPAGATION WITH NETWORK NOISE)
-    print("\n[3] Simulazione di Gossip Semantico (Propagazione di concetti)...")
+    # 4. TEST CASE 1: SEMANTIC ROUTING OF KNOWN CONCEPTS
+    print("\n[4] TEST CASE 1: Routing Semantico di un concetto noto (Oncologia)...")
     
-    # Node 0 (Osservatore-A) generates a new concept in the shared subspace
-    source_node = nodes[0]
-    print(f"  * {source_node['name']} scopre un nuovo concetto interno...")
+    # Generate an input concept close to the Oncology expert (adding small noise)
+    input_oncology = oncology_centroid + np.random.normal(0, 0.05, (1, D_shared))
+    input_oncology /= np.linalg.norm(input_oncology)
     
-    # Generate random active state in Node 0's internal representation from the valid subspace
-    latent_concept = np.random.randn(1, D_intrinsic)
-    shared_concept_omega = np.dot(latent_concept, projection_matrix)
-    shared_concept_omega /= np.linalg.norm(shared_concept_omega)
+    # Process input
+    status, result, pre, metric = node.process_input(input_oncology, threshold=0.35)
     
-    local_concept_vector = np.dot(shared_concept_omega, source_node["true_transform"]) + np.random.normal(0, 0.02, (1, source_node["aligner"].local_dim))
+    print(f"    - Stato elaborazione: {status}")
+    print(f"    - Risultato routing: {result}")
+    print(f"    - Errore di ricostruzione (PRE): {pre:.4f}")
+    print(f"    - Similarita Cosenuale con l'esperto: {metric * 100:.2f}%")
     
-    # Project to the shared Omega space
-    shared_concept_omega_actual = source_node["aligner"].project(local_concept_vector)
-    
-    # Gossip the concept across the network, adding transmission noise
-    transmission_noise_level = 0.02
-    print(f"  * Gossip in corso... Aggiunta rumore di trasmissione (sigma={transmission_noise_level})")
-    
-    # Simulate gossip delivery to all other nodes
-    for idx, dest_node in enumerate(nodes[1:], start=1):
-        # Add independent noise to simulation
-        noise = np.random.normal(0, transmission_noise_level, (1, D_shared))
-        received_omega = shared_concept_omega_actual + noise
-        
-        # Destination node reconstructs the vector into its local space
-        reconstructed_local = dest_node["aligner"].reconstruct(received_omega)
-        
-        # Destination node projects back to shared space to measure similarity
-        reprojected_omega = dest_node["aligner"].project(reconstructed_local)
-        
-        # Calculate cosine similarity with the original source concept
-        similarity = dest_node["aligner"].cosine_similarity(shared_concept_omega_actual, reprojected_omega)
-        
-        print(f"    -> Connessione con {dest_node['name']} (d={dest_node['aligner'].local_dim}):")
-        print(f"       Similarita Cosenuale del Significato: {similarity * 100:.2f}%")
-        
-        # Assert similarity is high (>90% under noise)
-        assert similarity > 0.90, f"La similarita per {dest_node['name']} e' troppo bassa!"
+    assert status == "ROUTE_SUCCESS", "Il routing avrebbe dovuto avere successo!"
+    assert result == "Oncologia", "Il concetto avrebbe dovuto essere indirizzato a 'Oncologia'!"
+    assert pre <= 0.35, "L'errore PRE avrebbe dovuto essere inferiore alla soglia!"
+    print("    - [PASS] Concetto noto instradato correttamente.")
 
-    # 4. SEMANTIC IMMUNOLOGY (ATTACK FILTERING)
-    print("\n[4] Simulazione di Immunologia Semantica (Rifiuto payload nocivi/estranei)...")
+    # 5. TEST CASE 2: NOVEL CONCEPT AND DYNAMIC SPROUTING (LEARNING)
+    print("\n[5] TEST CASE 2: Ricezione di un concetto valido ma ignoto (Fisica del Clima)...")
     
-    # Define an immunological threshold based on calibration errors
-    # If the projection reconstruction error (PRE) exceeds this, the node rejects the packet.
-    immunology_threshold = 0.35
-    print(f"  * Impostazione Soglia Immunitaria (Distanza PRE max: {immunology_threshold})")
+    # Generate a concept in the valid 20D subspace but far/orthogonal to Oncology/Folding
+    # We construct a vector orthogonal to both centroids in the subspace
+    proj_space_cents = np.vstack([oncology_centroid, folding_centroid])
+    # Generate random vector in 20D subspace
+    latent_climate = np.random.randn(1, D_intrinsic)
+    climate_concept = np.dot(latent_climate, projection_matrix)
+    # Project out components of Oncology and Folding
+    for cent in proj_space_cents:
+        climate_concept -= np.dot(climate_concept, cent.T) * cent
+    climate_concept /= np.linalg.norm(climate_concept)
     
-    # Test Node 1 (Guardiano-B) as the validator
-    validator = nodes[1]
+    print("    - Invio del nuovo concetto semantico al nodo...")
     
-    # Case A: Honest message from Node 0
-    honest_noise = np.random.normal(0, 0.02, (1, D_shared))
-    honest_packet = shared_concept_omega_actual + honest_noise
+    # First attempt: Node has never calibrated for this direction
+    status, result, pre, metric = node.process_input(climate_concept, threshold=0.35)
     
-    # Validate honest message
-    reconstructed_h = validator["aligner"].reconstruct(honest_packet)
-    reprojected_h = validator["aligner"].project(reconstructed_h)
-    pre_honest = np.linalg.norm(honest_packet - reprojected_h)
+    print(f"    - Primo tentativo:")
+    print(f"      - Stato: {status}")
+    print(f"      - Risultato: {result}")
+    print(f"      - Errore PRE: {pre:.4f}")
+    print(f"      - Errore Sottospazio: {metric:.4f}")
     
-    print(f"\n  * Validazione pacchetto onesto da {validator['name']}:")
-    print(f"    - Errore di ricostruzione (PRE): {pre_honest:.4f}")
-    if pre_honest <= immunology_threshold:
-        print("    - [ACCETTATO] Il concetto si integra armonicamente nella matrice cognitiva locale.")
-    else:
-        print("    - [RIFIUTATO] Rilevata anomalia semantica!")
-    assert pre_honest <= immunology_threshold, "Il pacchetto onesto non avrebbe dovuto essere rifiutato!"
-        
-    # Case B: Malicious random payload (Spam / High-Entropy Attack)
-    # Generate a completely random 64D vector that will lie outside the 20D subspace
-    malicious_packet = np.random.randn(1, D_shared)
-    malicious_packet /= np.linalg.norm(malicious_packet) # Scale similarly
+    # The first attempt should trigger sprouting because PRE > 0.35 but subspace_err <= 0.15
+    assert status == "SPROUTED", "Il concetto avrebbe dovuto innescare la germogliazione (Sprouting)!"
+    assert result == "Expert_3", "Dovrebbe essere stato creato l'esperto 'Expert_3'!"
+    print("    - [SPROUT] Rilevata novita semantica valida. Creato 'Expert_3' e avviata ricalibrazione locale.")
     
-    # Validate malicious random message
-    reconstructed_m = validator["aligner"].reconstruct(malicious_packet)
-    reprojected_m = validator["aligner"].project(reconstructed_m)
-    pre_malicious = np.linalg.norm(malicious_packet - reprojected_m)
+    # Second attempt: Send the SAME concept again. Now the node has sprouted the expert and recalibrated its W!
+    print("    - Re-invio dello stesso concetto dopo la germogliazione e ricalibrazione...")
+    status_2, result_2, pre_2, metric_2 = node.process_input(climate_concept, threshold=0.35)
     
-    print(f"\n  * Validazione pacchetto malevolo (Spam casuale) da {validator['name']}:")
-    print(f"    - Errore di ricostruzione (PRE): {pre_malicious:.4f}")
-    if pre_malicious <= immunology_threshold:
-        print("    - [ACCETTATO] Il concetto si integra armonicamente nella matrice cognitiva locale.")
-    else:
-        print("    - [RIFIUTATO] Rilevata anomalia semantica! Pacchetto messo in quarantena.")
-    assert pre_malicious > immunology_threshold, "L'attacco di spam casuale avrebbe dovuto essere rifiutato!"
-        
-    # Case C: Malicious OOD targeted attack (Adversarial Concept orthogonal to the anchor space)
-    # We construct a vector in the nullspace of the projection matrix
-    # Project a random vector onto the orthogonal complement of the projection_matrix rows
-    u, s, vh = np.linalg.svd(projection_matrix)
-    # vh has shape D_shared x D_shared. The last (D_shared - D_intrinsic) rows are orthogonal to the projection space.
-    orthogonal_basis = vh[D_intrinsic:] # (D_shared - D_intrinsic) x D_shared
+    print(f"    - Secondo tentativo:")
+    print(f"      - Stato: {status_2}")
+    print(f"      - Risultato routing: {result_2}")
+    print(f"      - Nuovo Errore PRE: {pre_2:.4f}")
+    print(f"      - Similarita Cosenuale con il nuovo esperto: {metric_2 * 100:.2f}%")
     
-    # Linear combination of orthogonal vectors
-    adversarial_packet = np.dot(np.random.randn(1, D_shared - D_intrinsic), orthogonal_basis)
-    adversarial_packet /= np.linalg.norm(adversarial_packet)
+    assert status_2 == "ROUTE_SUCCESS", "Dopo la ricalibrazione, il routing avrebbe dovuto avere successo!"
+    assert result_2 == "Expert_3", "Il concetto deve essere instradato a 'Expert_3'!"
+    assert pre_2 <= 0.35, "Dopo la calibrazione, il PRE deve rientrare nella soglia di conformita!"
+    print("    - [PASS] Apprendimento completato con successo! Il nodo ora comprende e instrada il nuovo concetto.")
+
+    # 6. TEST CASE 3: ADVERSARIAL SPAM SCREENING
+    print("\n[6] TEST CASE 3: Tentativo di iniezione di spam casuale (Payload estraneo)...")
     
-    reconstructed_adv = validator["aligner"].reconstruct(adversarial_packet)
-    reprojected_adv = validator["aligner"].project(reconstructed_adv)
-    pre_adv = np.linalg.norm(adversarial_packet - reprojected_adv)
+    # Completely random 64D noise, outside the 20D subspace
+    spam_vector = np.random.randn(1, D_shared)
+    spam_vector /= np.linalg.norm(spam_vector)
     
-    print(f"\n  * Validazione pacchetto avversario (Fuori Distribuzione) da {validator['name']}:")
-    print(f"    - Errore di ricostruzione (PRE): {pre_adv:.4f}")
-    if pre_adv <= immunology_threshold:
-        print("    - [ACCETTATO] Il concetto si integra armonicamente nella matrice cognitiva locale.")
-    else:
-        print("    - [RIFIUTATO] Rilevata anomalia semantica! Pacchetto messo in quarantena.")
-    assert pre_adv > immunology_threshold, "L'attacco avversario OOD avrebbe dovuto essere rifiutato!"
+    status_s, result_s, pre_s, metric_s = node.process_input(spam_vector, threshold=0.35)
+    
+    print(f"    - Stato elaborazione: {status_s}")
+    print(f"    - Risultato: {result_s}")
+    print(f"    - Errore PRE: {pre_s:.4f}")
+    print(f"    - Errore Sottospazio: {metric_s:.4f}")
+    
+    assert status_s == "REJECTED_SPAM", "Lo spam avrebbe dovuto essere rifiutato!"
+    assert result_s == "quarantine", "Lo spam deve essere inviato in quarantena!"
+    print("    - [PASS] Lo spam e' stato identificato come anomalia semantica ed e' stato isolato.")
 
     print("\n======================================================================")
-    print("SIMULAZIONE COMPLETATA CON SUCCESSO! TUTTE LE ASSERZIONI SUPERATE.")
+    print("SIMULAZIONE NEUROPLASTICA COMPLETATA CON SUCCESSO! ASSERZIONI SUPERATE.")
     print("======================================================================")
 
 if __name__ == "__main__":
