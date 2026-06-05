@@ -1,0 +1,17 @@
+[package]
+name        = "santuario-vault"
+description = "Sovereign Vault Stub for local key storage and TPM2 attestation. Enforces key envelope integrity."
+version.workspace      = true
+edition.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[dependencies]
+# Dependencies needed for key derivation and attestation stubs
+serde      = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+anyhow     = { workspace = true }
+thiserror  = { workspace = true }
+log        = { workspace = true }

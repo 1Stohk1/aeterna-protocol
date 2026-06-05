@@ -53,11 +53,14 @@ vendor/
 
 # --- Santuario: sensitive runtime artifacts ---
 # NEVER commit these. They are derived from the TPM and contain sovereignty.
-santuario/vault/
+santuario/vault/*.key
+santuario/vault/*.envelope
+santuario/vault/*.bip39
+santuario/vault/*.x25519
+santuario/vault/checkpoints/
 santuario/keys/
 santuario/checkpoints/
 *.pem
-*.key
 *.kyber
 *.dilithium
 wallet.*

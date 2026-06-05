@@ -1,5 +1,7 @@
 [workspace]
 members = [
+    "signer",
+    "vault",
     "isolation",
     "critic",
     "integrity",
