@@ -167,7 +167,7 @@ $ErrorActionPreference = "Stop"
 $RepoRoot = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $RepoRoot
 
-$EncryptedLogStatus = if ($SeedFile -ne "" -and (Test-Path $SeedFile)) { "yes (seed: $SeedFile)" } else { "no (ephemeral key — run santuarioctl key import)" }
+$EncryptedLogStatus = if ($SeedFile -ne "" -and (Test-Path $SeedFile)) { "yes (seed: $SeedFile)" } else { "no (ephemeral key - run santuarioctl key import)" }
 $RatchetStatus      = if ($SeedFile -ne "" -and (Test-Path $SeedFile)) { "active (identity derived from seed)" } else { "inactive (no seed file)" }
 
 $Banner = @"
