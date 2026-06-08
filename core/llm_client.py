@@ -137,6 +137,6 @@ class OllamaClient:
             headers={"Content-Type": "application/json"},
             method="POST"
         )
-        with urllib.request.urlopen(req, timeout=30.0) as response:
+        with urllib.request.urlopen(req, timeout=90.0) as response:
             res_data = json.loads(response.read().decode("utf-8"))
             return res_data.get("response", "")

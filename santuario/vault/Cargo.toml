@@ -8,10 +8,26 @@ license.workspace      = true
 repository.workspace   = true
 rust-version.workspace = true
 
+[features]
+default = []
+tpm2 = []
+
 [dependencies]
-# Dependencies needed for key derivation and attestation stubs
+# Dependencies needed for key derivation, envelope encryption, and CLI
 serde      = { workspace = true, features = ["derive"] }
 serde_json = { workspace = true }
 anyhow     = { workspace = true }
 thiserror  = { workspace = true }
 log        = { workspace = true }
+clap       = { workspace = true, features = ["derive", "env"] }
+env_logger = { workspace = true }
+chrono     = { workspace = true, features = ["serde", "clock"] }
+hex        = { workspace = true, features = ["serde"] }
+hkdf       = { workspace = true }
+rand       = { workspace = true }
+sha2       = { workspace = true }
+zeroize    = { workspace = true, features = ["zeroize_derive"] }
+aes-gcm    = { workspace = true }
+
+[dev-dependencies]
+tempfile   = { workspace = true }
