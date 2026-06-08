@@ -259,8 +259,9 @@ export default function App() {
 
         // Vertical tilt (slowly oscillating slightly for organic motion)
         const tiltX = 0.45 + Math.sin(time * 0.00015) * 0.08;
-        const y2 = y * Math.cos(tiltX) - z1 * Math.sin(tiltX);
-        const z2 = y * Math.sin(tiltX) + z1 * Math.cos(tiltX);
+        const y2 = y * Math.cos(tiltX) + z1 * Math.sin(tiltX);
+        const z2 = -y * Math.sin(tiltX) + z1 * Math.cos(tiltX);
+
 
         // Perspective scaling (camera distance)
         const cameraDistance = 2.5;
