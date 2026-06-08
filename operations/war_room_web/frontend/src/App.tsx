@@ -65,6 +65,8 @@ interface ProjectionData {
   similarities: Record<string, number>;
   vector_2d: [number, number];
   experts_2d: Record<string, [number, number]>;
+  vector_3d?: [number, number, number];
+  experts_3d?: Record<string, [number, number, number]>;
 }
 
 interface ChatMessage {
@@ -99,9 +101,10 @@ export default function App() {
   const animationFrameRef = useRef<number | null>(null);
 
   // Interpolated vector for smooth movement in Canvas
-  const currentVectorRef = useRef<[number, number]>([0, 0]);
-  const targetVectorRef = useRef<[number, number]>([0, 0]);
+  const currentVectorRef = useRef<[number, number, number]>([0, 0, 0]);
+  const targetVectorRef = useRef<[number, number, number]>([0, 0, 0]);
   const lockProgressRef = useRef<number>(0);
+
 
   // Fetch status, metrics, peers, audit logs
   const fetchData = async () => {
@@ -180,8 +183,13 @@ export default function App() {
         if (data.projection) {
           setLastProjection(data.projection);
           // Set target for smooth visual transition
-          targetVectorRef.current = data.projection.vector_2d;
+          const proj = data.projection;
+          const x = proj.vector_3d?.[0] ?? proj.vector_2d?.[0] ?? 0;
+          const y = proj.vector_3d?.[1] ?? proj.vector_2d?.[1] ?? 0;
+          const z = proj.vector_3d?.[2] ?? (Math.sin(x * 3 + y * 2) * 0.4);
+          targetVectorRef.current = [x, y, z];
         }
+
       } else {
         const data = await res.json();
         setChatMessages([
@@ -203,9 +211,10 @@ export default function App() {
   const handleClearHistory = () => {
     setChatMessages([]);
     setLastProjection(null);
-    targetVectorRef.current = [0, 0];
-    currentVectorRef.current = [0, 0];
+    targetVectorRef.current = [0, 0, 0];
+    currentVectorRef.current = [0, 0, 0];
   };
+
 
   // Format UNIX timestamp to UTC string
   const formatUtc = (ts: number) => {
@@ -229,8 +238,6 @@ export default function App() {
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
 
-    let rotationAngle = 0;
-
     const render = (time: number) => {
       // Clear and size canvas to container
       const width = canvas.width = canvas.parentElement?.clientWidth || 500;
@@ -241,132 +248,227 @@ export default function App() {
 
       const centerX = width / 2;
       const centerY = height / 2;
-      const radius = Math.min(width, height) * 0.42;
+      const radius = Math.min(width, height) * 0.40;
 
-      // 1. Draw grid background & radial lines
-      ctx.strokeStyle = 'rgba(6, 182, 212, 0.06)';
-      ctx.lineWidth = 1;
+      // 3D Projection Math
+      const project3D = (x: number, y: number, z: number) => {
+        // Horizontal rotation over time (vertical axis)
+        const rotY = time * 0.0004;
+        const x1 = x * Math.cos(rotY) - z * Math.sin(rotY);
+        const z1 = x * Math.sin(rotY) + z * Math.cos(rotY);
 
-      // Concentric circles
-      for (let i = 1; i <= 4; i++) {
+        // Vertical tilt (slowly oscillating slightly for organic motion)
+        const tiltX = 0.45 + Math.sin(time * 0.00015) * 0.08;
+        const y2 = y * Math.cos(tiltX) - z1 * Math.sin(tiltX);
+        const z2 = y * Math.sin(tiltX) + z1 * Math.cos(tiltX);
+
+        // Perspective scaling (camera distance)
+        const cameraDistance = 2.5;
+        const scale = cameraDistance / (cameraDistance + z2);
+        
+        const sx = centerX + x1 * scale * radius;
+        const sy = centerY - y2 * scale * radius;
+        
+        return { x: sx, y: sy, z: z2, scale };
+      };
+
+      // 1. Draw 3D Grid floor (concentric rings in X-Z plane)
+      const ringColor = 'rgba(6, 182, 212, 0.06)';
+      const ringColorDashed = 'rgba(6, 182, 212, 0.15)';
+      
+      const drawXZRing = (r: number, color: string, isDashed = false) => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        if (isDashed) ctx.setLineDash([2, 5]);
         ctx.beginPath();
-        ctx.arc(centerX, centerY, radius * (i / 4), 0, Math.PI * 2);
+        const segments = 64;
+        for (let j = 0; j <= segments; j++) {
+          const theta = (j / segments) * Math.PI * 2;
+          const px = r * Math.cos(theta);
+          const pz = r * Math.sin(theta);
+          const pt = project3D(px, 0, pz);
+          if (j === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        }
         ctx.stroke();
+        if (isDashed) ctx.setLineDash([]);
+      };
+
+      // Floor rings
+      for (let i = 1; i <= 4; i++) {
+        drawXZRing(i / 4, i === 4 ? ringColorDashed : ringColor, i === 4);
       }
 
-      // X-Y Axes
-      ctx.beginPath();
-      ctx.moveTo(centerX - radius, centerY);
-      ctx.lineTo(centerX + radius, centerY);
-      ctx.moveTo(centerX, centerY - radius);
-      ctx.lineTo(centerX, centerY + radius);
-      ctx.stroke();
+      // Vertical longitudinal/latitudinal outer rings (wireframe sphere envelope)
+      const drawSphereWireframe = () => {
+        // Y-Z hoop
+        ctx.strokeStyle = 'rgba(168, 85, 247, 0.04)';
+        ctx.beginPath();
+        for (let j = 0; j <= 64; j++) {
+          const theta = (j / 64) * Math.PI * 2;
+          const pt = project3D(0, Math.cos(theta), Math.sin(theta));
+          if (j === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        }
+        ctx.stroke();
 
-      // Dashed ticks
-      ctx.strokeStyle = 'rgba(6, 182, 212, 0.2)';
-      ctx.setLineDash([2, 5]);
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, radius, 0, Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
+        // X-Y hoop
+        ctx.strokeStyle = 'rgba(6, 182, 212, 0.04)';
+        ctx.beginPath();
+        for (let j = 0; j <= 64; j++) {
+          const theta = (j / 64) * Math.PI * 2;
+          const pt = project3D(Math.cos(theta), Math.sin(theta), 0);
+          if (j === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        }
+        ctx.stroke();
+      };
+      drawSphereWireframe();
 
-      // 2. Draw outer rotating HUD ring
-      rotationAngle += 0.003;
-      ctx.strokeStyle = 'rgba(168, 85, 247, 0.18)';
-      ctx.lineWidth = 1.5;
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, radius * 1.05, rotationAngle, rotationAngle + Math.PI * 0.4);
-      ctx.stroke();
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, radius * 1.05, rotationAngle + Math.PI, rotationAngle + Math.PI * 1.4);
-      ctx.stroke();
+      // Concentric Orbiting Dials on the X-Z plane rotating in opposite directions in 3D
+      const rotAngle = time * 0.0008;
+      
+      const drawXZDial = (r: number, rotSpeed: number, color: string, dashes: number[]) => {
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        if (dashes.length > 0) ctx.setLineDash(dashes);
+        ctx.beginPath();
+        const segments = 64;
+        const currentAngle = rotAngle * rotSpeed;
+        for (let j = 0; j <= segments; j++) {
+          const theta = (j / segments) * Math.PI * 2 + currentAngle;
+          const px = r * Math.cos(theta);
+          const pz = r * Math.sin(theta);
+          const pt = project3D(px, 0, pz);
+          if (j === 0) ctx.moveTo(pt.x, pt.y);
+          else ctx.lineTo(pt.x, pt.y);
+        }
+        ctx.stroke();
+        if (dashes.length > 0) ctx.setLineDash([]);
+      };
 
-      // Concentric Orbiting Dials (Concentric Rings rotating in opposite directions)
+      // Outer purple ring (gyroscope style)
+      drawXZDial(1.05, 0.3, 'rgba(168, 85, 247, 0.15)', [20, 40]);
       // Outer Counter-clockwise dial
-      ctx.strokeStyle = 'rgba(6, 182, 212, 0.12)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([4, 15]);
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, radius * 0.8, -rotationAngle * 0.6, -rotationAngle * 0.6 + Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
-
+      drawXZDial(0.8, -0.6, 'rgba(6, 182, 212, 0.12)', [4, 15]);
       // Inner Clockwise dial
-      ctx.strokeStyle = 'rgba(168, 85, 247, 0.12)';
-      ctx.lineWidth = 1;
-      ctx.setLineDash([2, 8]);
-      ctx.beginPath();
-      ctx.arc(centerX, centerY, radius * 0.4, rotationAngle * 0.9, rotationAngle * 0.9 + Math.PI * 2);
-      ctx.stroke();
-      ctx.setLineDash([]);
+      drawXZDial(0.4, 0.9, 'rgba(168, 85, 247, 0.12)', [2, 8]);
 
-      // Outer rings corner brackets
+      // 2. Draw 3D coordinate axes
+      const axes = [
+        { start: [-1.1, 0, 0], end: [1.1, 0, 0], label: 'X', color: 'rgba(6, 182, 212, 0.15)' },
+        { start: [0, -1.1, 0], end: [0, 1.1, 0], label: 'Y', color: 'rgba(168, 85, 247, 0.15)' },
+        { start: [0, 0, -1.1], end: [0, 0, 1.1], label: 'Z', color: 'rgba(16, 185, 129, 0.15)' }
+      ];
+      axes.forEach(axis => {
+        const ptS = project3D(axis.start[0], axis.start[1], axis.start[2]);
+        const ptE = project3D(axis.end[0], axis.end[1], axis.end[2]);
+        ctx.strokeStyle = axis.color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(ptS.x, ptS.y);
+        ctx.lineTo(ptE.x, ptE.y);
+        ctx.stroke();
+        
+        ctx.fillStyle = 'rgba(243, 244, 246, 0.25)';
+        ctx.font = '8px "Share Tech Mono"';
+        ctx.fillText(axis.label, ptE.x + 4, ptE.y + 3);
+      });
+
+      // Outer rings corner brackets (flat HUD overlay)
       ctx.strokeStyle = 'rgba(6, 182, 212, 0.3)';
       ctx.lineWidth = 1;
       const bracketSize = 15;
-      
-      // Top-Left Corner
       ctx.beginPath();
       ctx.moveTo(10, 10 + bracketSize); ctx.lineTo(10, 10); ctx.lineTo(10 + bracketSize, 10);
-      ctx.stroke();
-      // Top-Right Corner
-      ctx.beginPath();
       ctx.moveTo(width - 10, 10 + bracketSize); ctx.lineTo(width - 10, 10); ctx.lineTo(width - 10 - bracketSize, 10);
-      ctx.stroke();
-      // Bottom-Left Corner
-      ctx.beginPath();
       ctx.moveTo(10, height - 10 - bracketSize); ctx.lineTo(10, height - 10); ctx.lineTo(10 + bracketSize, height - 10);
-      ctx.stroke();
-      // Bottom-Right Corner
-      ctx.beginPath();
       ctx.moveTo(width - 10, height - 10 - bracketSize); ctx.lineTo(width - 10, height - 10); ctx.lineTo(width - 10 - bracketSize, height - 10);
       ctx.stroke();
 
-      // 3. Define Expert Coordinates (matching backend 2D vectors)
-      // Generale: [0.70, 0.50], Oncologia: [0.15, 0.85], HP-Folding: [0.80, -0.35]
-      const experts: Record<string, { x: number; y: number; color: string; label: string }> = {
-        'Generale': { x: 0.60, y: 0.40, color: '#10b981', label: 'Centr. Generale (Ω)' },
-        'Oncologia': { x: -0.50, y: 0.70, color: '#ef4444', label: 'Centr. Oncologia' },
-        'HP-Folding': { x: 0.70, y: -0.50, color: '#a855f7', label: 'Centr. HP-Folding' }
+      // 3. Define Expert Coordinates (matching backend 3D vectors or fallback)
+      const experts3d: Record<string, { x: number; y: number; z: number; color: string; label: string }> = {
+        'Generale': { 
+          x: lastProjection?.experts_3d?.Generale?.[0] ?? 0.60, 
+          y: lastProjection?.experts_3d?.Generale?.[1] ?? 0.40, 
+          z: lastProjection?.experts_3d?.Generale?.[2] ?? 0.20, 
+          color: '#10b981', 
+          label: 'Centr. Generale (Ω)' 
+        },
+        'Oncologia': { 
+          x: lastProjection?.experts_3d?.Oncologia?.[0] ?? -0.50, 
+          y: lastProjection?.experts_3d?.Oncologia?.[1] ?? 0.70, 
+          z: lastProjection?.experts_3d?.Oncologia?.[2] ?? -0.40, 
+          color: '#ef4444', 
+          label: 'Centr. Oncologia' 
+        },
+        'HP-Folding': { 
+          x: lastProjection?.experts_3d?.['HP-Folding']?.[0] ?? 0.70, 
+          y: lastProjection?.experts_3d?.['HP-Folding']?.[1] ?? -0.50, 
+          z: lastProjection?.experts_3d?.['HP-Folding']?.[2] ?? 0.50, 
+          color: '#a855f7', 
+          label: 'Centr. HP-Folding' 
+        }
       };
 
-      // Draw expert centroids
-      Object.entries(experts).forEach(([name, exp]) => {
-        const cx = centerX + exp.x * radius;
-        const cy = centerY - exp.y * radius; // Negate Y
+      // Draw expert centroids in 3D (sorted by depth Z for correct layering)
+      const projectedExperts = Object.entries(experts3d).map(([name, exp]) => {
+        const pt = project3D(exp.x, exp.y, exp.z);
+        return { name, exp, pt };
+      });
+      
+      // Sort so deeper ones (larger Z) are drawn first
+      projectedExperts.sort((a, b) => b.pt.z - a.pt.z);
 
+      projectedExperts.forEach(({ name, exp, pt }) => {
+        // Opacity and size based on depth (from near to far)
+        const depthOpacity = Math.max(0.2, Math.min(1.0, 1 - (pt.z + 1.2) / 2.4));
+        
         // Outer glow circle
-        ctx.fillStyle = exp.color + '0c'; // 5% opacity
+        ctx.fillStyle = `${exp.color}${Math.floor(depthOpacity * 12).toString(16).padStart(2, '0')}`;
         ctx.beginPath();
-        ctx.arc(cx, cy, 18, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, 14 * pt.scale, 0, Math.PI * 2);
         ctx.fill();
 
-        ctx.strokeStyle = exp.color + '33'; // 20% opacity
+        ctx.strokeStyle = `${exp.color}${Math.floor(depthOpacity * 50).toString(16).padStart(2, '0')}`;
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.arc(cx, cy, 10, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, 8 * pt.scale, 0, Math.PI * 2);
         ctx.stroke();
 
         // Inner solid dot
         ctx.fillStyle = exp.color;
         ctx.beginPath();
-        ctx.arc(cx, cy, 4, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, 3.5 * pt.scale, 0, Math.PI * 2);
         ctx.fill();
 
-        // Label
-        ctx.fillStyle = 'rgba(243, 244, 246, 0.4)';
-        ctx.font = '9px "Share Tech Mono"';
-        ctx.fillText(exp.label, cx + 12, cy + 3);
+        // Label facing the screen
+        ctx.fillStyle = `rgba(243, 244, 246, ${0.25 + depthOpacity * 0.4})`;
+        ctx.font = `${Math.max(6, Math.floor(9 * pt.scale))}px "Share Tech Mono"`;
+        ctx.fillText(exp.label, pt.x + 10 * pt.scale, pt.y + 3);
       });
 
       // 4. Smooth Vector Interpolation
-      const dx = targetVectorRef.current[0] - currentVectorRef.current[0];
-      const dy = targetVectorRef.current[1] - currentVectorRef.current[1];
-      currentVectorRef.current[0] += dx * 0.08;
-      currentVectorRef.current[1] += dy * 0.08;
+      const tx = targetVectorRef.current[0] ?? 0;
+      const ty = targetVectorRef.current[1] ?? 0;
+      const tz = targetVectorRef.current[2] ?? 0;
 
-      const vx = centerX + currentVectorRef.current[0] * radius;
-      const vy = centerY - currentVectorRef.current[1] * radius; // Negate Y
+      const cx = currentVectorRef.current[0] ?? 0;
+      const cy = currentVectorRef.current[1] ?? 0;
+      const cz = currentVectorRef.current[2] ?? 0;
+
+      const dx = tx - cx;
+      const dy = ty - cy;
+      const dz = tz - cz;
+
+      currentVectorRef.current[0] = cx + dx * 0.08;
+      currentVectorRef.current[1] = cy + dy * 0.08;
+      currentVectorRef.current[2] = cz + dz * 0.08;
+
+      const cvx = currentVectorRef.current[0];
+      const cvy = currentVectorRef.current[1];
+      const cvz = currentVectorRef.current[2];
+      const vpt = project3D(cvx, cvy, cvz);
 
       const hasActiveProjection = lastProjection !== null;
 
@@ -380,48 +482,74 @@ export default function App() {
       }
 
       if (hasActiveProjection) {
-        // Draw path line from center (0,0) to v_omega
-        ctx.strokeStyle = 'rgba(6, 182, 212, 0.4)';
-        ctx.lineWidth = 1.5;
-        ctx.setLineDash([3, 3]);
-        ctx.beginPath();
-        ctx.moveTo(centerX, centerY);
-        ctx.lineTo(vx, vy);
-        ctx.stroke();
-        ctx.setLineDash([]);
-
-        // Draw routing alignment line from v_omega to nearest expert centroid
-        const route = lastProjection?.routing;
-        if (route && experts[route]) {
-          const exp = experts[route];
-          const ecx = centerX + exp.x * radius;
-          const ecy = centerY - exp.y * radius;
-          
-          ctx.strokeStyle = exp.color + '77';
+        const opt = project3D(0, 0, 0);
+        // Draw path line from center (0,0,0) to current v_omega in 3D
+        if (isFinite(opt.x) && isFinite(opt.y) && isFinite(vpt.x) && isFinite(vpt.y)) {
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.4)';
           ctx.lineWidth = 1.5;
-          ctx.setLineDash([2, 4]);
+          ctx.setLineDash([3, 3]);
           ctx.beginPath();
-          ctx.moveTo(vx, vy);
-          ctx.lineTo(ecx, ecy);
+          ctx.moveTo(opt.x, opt.y);
+          ctx.lineTo(vpt.x, vpt.y);
           ctx.stroke();
           ctx.setLineDash([]);
         }
 
-        // Draw pulsating projection vector
-        const pulse = Math.sin(time * 0.007) * 4 + 10;
-        const grad = ctx.createRadialGradient(vx, vy, 1, vx, vy, pulse);
-        grad.addColorStop(0, 'rgba(6, 182, 212, 1)');
-        grad.addColorStop(0.3, 'rgba(6, 182, 212, 0.5)');
-        grad.addColorStop(1, 'rgba(6, 182, 212, 0)');
-        ctx.fillStyle = grad;
-        ctx.beginPath();
-        ctx.arc(vx, vy, pulse, 0, Math.PI * 2);
-        ctx.fill();
+        // Draw coordinate floor projection line (X-Z plane drop line)
+        const floorPt = project3D(cvx, 0, cvz);
+        if (isFinite(vpt.x) && isFinite(vpt.y) && isFinite(floorPt.x) && isFinite(floorPt.y)) {
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.2)';
+          ctx.lineWidth = 1;
+          ctx.setLineDash([1, 4]);
+          ctx.beginPath();
+          ctx.moveTo(vpt.x, vpt.y);
+          ctx.lineTo(floorPt.x, floorPt.y);
+          ctx.stroke();
+          ctx.setLineDash([]);
+          
+          // Floor point marker
+          ctx.fillStyle = 'rgba(6, 182, 212, 0.25)';
+          ctx.beginPath();
+          ctx.arc(floorPt.x, floorPt.y, 2, 0, Math.PI * 2);
+          ctx.fill();
+        }
 
-        ctx.fillStyle = '#06b6d4';
-        ctx.beginPath();
-        ctx.arc(vx, vy, 4, 0, Math.PI * 2);
-        ctx.fill();
+        // Draw routing alignment line from v_omega to nearest expert centroid in 3D
+        const route = lastProjection?.routing;
+        if (route && experts3d[route]) {
+          const exp = experts3d[route];
+          const ept = project3D(exp.x, exp.y, exp.z);
+          
+          if (isFinite(vpt.x) && isFinite(vpt.y) && isFinite(ept.x) && isFinite(ept.y)) {
+            ctx.strokeStyle = exp.color + '66';
+            ctx.lineWidth = 1.5;
+            ctx.setLineDash([2, 4]);
+            ctx.beginPath();
+            ctx.moveTo(vpt.x, vpt.y);
+            ctx.lineTo(ept.x, ept.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+        }
+
+        // Draw pulsating projection vector
+        const pulse = (Math.sin(time * 0.007) * 4 + 10) * vpt.scale;
+        if (isFinite(vpt.x) && isFinite(vpt.y) && isFinite(pulse) && pulse > 0) {
+          const grad = ctx.createRadialGradient(vpt.x, vpt.y, 1, vpt.x, vpt.y, pulse);
+          grad.addColorStop(0, 'rgba(6, 182, 212, 1)');
+          grad.addColorStop(0.3, 'rgba(6, 182, 212, 0.5)');
+          grad.addColorStop(1, 'rgba(6, 182, 212, 0)');
+          ctx.fillStyle = grad;
+          ctx.beginPath();
+          ctx.arc(vpt.x, vpt.y, pulse, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#06b6d4';
+          ctx.beginPath();
+          ctx.arc(vpt.x, vpt.y, Math.max(1, 4 * vpt.scale), 0, Math.PI * 2);
+          ctx.fill();
+        }
+
 
         // Target Clamping Lock Brackets (Iron Man Style sweep in and lock)
         const bracketOffset = (1 - lockProgressRef.current) * 25 + 10;
@@ -431,59 +559,60 @@ export default function App() {
         
         // Top-Left
         ctx.beginPath();
-        ctx.moveTo(vx - bracketOffset, vy - bracketOffset + bSize);
-        ctx.lineTo(vx - bracketOffset, vy - bracketOffset);
-        ctx.lineTo(vx - bracketOffset + bSize, vy - bracketOffset);
+        ctx.moveTo(vpt.x - bracketOffset, vpt.y - bracketOffset + bSize);
+        ctx.lineTo(vpt.x - bracketOffset, vpt.y - bracketOffset);
+        ctx.lineTo(vpt.x - bracketOffset + bSize, vpt.y - bracketOffset);
         ctx.stroke();
 
         // Top-Right
         ctx.beginPath();
-        ctx.moveTo(vx + bracketOffset, vy - bracketOffset + bSize);
-        ctx.lineTo(vx + bracketOffset, vy - bracketOffset);
-        ctx.lineTo(vx + bracketOffset - bSize, vy - bracketOffset);
+        ctx.moveTo(vpt.x + bracketOffset, vpt.y - bracketOffset + bSize);
+        ctx.lineTo(vpt.x + bracketOffset, vpt.y - bracketOffset);
+        ctx.lineTo(vpt.x + bracketOffset - bSize, vpt.y - bracketOffset);
         ctx.stroke();
 
         // Bottom-Left
         ctx.beginPath();
-        ctx.moveTo(vx - bracketOffset, vy + bracketOffset - bSize);
-        ctx.lineTo(vx - bracketOffset, vy + bracketOffset);
-        ctx.lineTo(vx - bracketOffset + bSize, vy + bracketOffset);
+        ctx.moveTo(vpt.x - bracketOffset, vpt.y + bracketOffset - bSize);
+        ctx.lineTo(vpt.x - bracketOffset, vpt.y + bracketOffset);
+        ctx.lineTo(vpt.x - bracketOffset + bSize, vpt.y + bracketOffset);
         ctx.stroke();
 
         // Bottom-Right
         ctx.beginPath();
-        ctx.moveTo(vx + bracketOffset, vy + bracketOffset - bSize);
-        ctx.lineTo(vx + bracketOffset, vy + bracketOffset);
-        ctx.lineTo(vx + bracketOffset - bSize, vy + bracketOffset);
+        ctx.moveTo(vpt.x + bracketOffset, vpt.y + bracketOffset - bSize);
+        ctx.lineTo(vpt.x + bracketOffset, vpt.y + bracketOffset);
+        ctx.lineTo(vpt.x + bracketOffset - bSize, vpt.y + bracketOffset);
         ctx.stroke();
 
         // Vector labels
         ctx.fillStyle = '#f3f4f6';
         ctx.font = '10px "Share Tech Mono"';
-        ctx.fillText(`Vector Omega (v_ω)`, vx + 12, vy - 12);
+        ctx.fillText(`Vector Omega (v_ω)`, vpt.x + 12, vpt.y - 12);
         ctx.fillStyle = 'rgba(6, 182, 212, 0.8)';
-        ctx.fillText(`[X: ${currentVectorRef.current[0].toFixed(3)}, Y: ${currentVectorRef.current[1].toFixed(3)}]`, vx + 12, vy - 2);
+        ctx.fillText(`[X: ${cvx.toFixed(3)}, Y: ${cvy.toFixed(3)}, Z: ${cvz.toFixed(3)}]`, vpt.x + 12, vpt.y - 2);
       } else {
-        // Draw hovering idle scanning vector
+        // Draw hovering idle scanning vector in 3D
         const idleX = Math.sin(time * 0.001) * 0.3;
         const idleY = Math.cos(time * 0.0008) * 0.3;
-        targetVectorRef.current = [idleX, idleY];
+        const idleZ = Math.sin(time * 0.0012) * 0.2;
+        targetVectorRef.current = [idleX, idleY, idleZ];
 
-        const pulse = Math.sin(time * 0.005) * 2 + 6;
+        const pulse = (Math.sin(time * 0.005) * 2 + 6) * vpt.scale;
         ctx.fillStyle = 'rgba(6, 182, 212, 0.15)';
         ctx.beginPath();
-        ctx.arc(vx, vy, pulse, 0, Math.PI * 2);
+        ctx.arc(vpt.x, vpt.y, pulse, 0, Math.PI * 2);
         ctx.fill();
 
         ctx.fillStyle = 'rgba(6, 182, 212, 0.4)';
         ctx.beginPath();
-        ctx.arc(vx, vy, 2.5, 0, Math.PI * 2);
+        ctx.arc(vpt.x, vpt.y, 2.5 * vpt.scale, 0, Math.PI * 2);
         ctx.fill();
 
         // Center coordinate label
         ctx.fillStyle = 'rgba(6, 182, 212, 0.3)';
         ctx.font = '9px "Share Tech Mono"';
-        ctx.fillText("Allineatore Rosetta Attivo (Scan)", vx + 8, vy - 4);
+        ctx.fillText("Allineatore Rosetta Attivo (Scan)", vpt.x + 8, vpt.y - 4);
       }
 
       // 5. Draw live digital matrix overlays (top-left metadata)
@@ -507,6 +636,7 @@ export default function App() {
 
       animationFrameRef.current = requestAnimationFrame(render);
     };
+
 
     animationFrameRef.current = requestAnimationFrame(render);
     return () => {
