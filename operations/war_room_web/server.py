@@ -242,13 +242,18 @@ class ApiHandler(BaseHTTPRequestHandler):
                     "routing": best_expert,
                     "similarity": best_sim,
                     "similarities": all_sims,
-                    # Provide projected 2D coordinates for visual canvas mapping (center vector + experts)
-                    # We can project our 64D vector onto a 2D plane (x, y) using simple scaling
+                    # Provide projected 2D and 3D coordinates for visual canvas mapping
                     "vector_2d": [float(vector_omega[0]), float(vector_omega[1])],
+                    "vector_3d": [float(vector_omega[0]), float(vector_omega[1]), float(vector_omega[2])],
                     "experts_2d": {
                         "Generale": [float(gen_ref[0]), float(gen_ref[1])],
                         "Oncologia": [float(onco_ref[0]), float(onco_ref[1])],
                         "HP-Folding": [float(fold_ref[0]), float(fold_ref[1])]
+                    },
+                    "experts_3d": {
+                        "Generale": [float(gen_ref[0]), float(gen_ref[1]), float(gen_ref[2])],
+                        "Oncologia": [float(onco_ref[0]), float(onco_ref[1]), float(onco_ref[2])],
+                        "HP-Folding": [float(fold_ref[0]), float(fold_ref[1]), float(fold_ref[2])]
                     }
                 }
             except Exception as e:
@@ -273,12 +278,19 @@ class ApiHandler(BaseHTTPRequestHandler):
                     "similarities": all_sims,
                     # Deterministic coordinates
                     "vector_2d": [0.6, 0.4] if best_expert == "Generale" else ([0.1, 0.8] if best_expert == "Oncologia" else [0.8, -0.3]),
+                    "vector_3d": [0.6, 0.4, 0.20] if best_expert == "Generale" else ([0.15, 0.80, -0.35] if best_expert == "Oncologia" else [0.75, -0.45, 0.40]),
                     "experts_2d": {
                         "Generale": [0.70, 0.50],
                         "Oncologia": [0.15, 0.85],
                         "HP-Folding": [0.80, -0.35]
+                    },
+                    "experts_3d": {
+                        "Generale": [0.60, 0.40, 0.20],
+                        "Oncologia": [-0.50, 0.70, -0.40],
+                        "HP-Folding": [0.70, -0.50, 0.50]
                     }
                 }
+
 
             # Fetch active architecture elements to pass to Llama context
             metrics_r = obs.get_metrics()
