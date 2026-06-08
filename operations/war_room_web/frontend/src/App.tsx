@@ -74,6 +74,12 @@ interface ChatMessage {
   content: string;
 }
 
+const baseExperts: Record<string, { x: number; y: number; z: number; color: string; label: string }> = {
+  'Generale': { x: 0.60, y: 0.40, z: 0.20, color: '#10b981', label: 'Centr. Generale (Ω)' },
+  'Oncologia': { x: -0.50, y: 0.70, z: -0.40, color: '#ef4444', label: 'Centr. Oncologia' },
+  'HP-Folding': { x: 0.70, y: -0.50, z: 0.50, color: '#a855f7', label: 'Centr. HP-Folding' }
+};
+
 export default function App() {
   // Navigation & Config States
   const [activeTab, setActiveTab] = useState<'hud' | 'metrics' | 'peers' | 'audit'>('hud');
@@ -104,6 +110,48 @@ export default function App() {
   const currentVectorRef = useRef<[number, number, number]>([0, 0, 0]);
   const targetVectorRef = useRef<[number, number, number]>([0, 0, 0]);
   const lockProgressRef = useRef<number>(0);
+
+  // 3D Orbit Interaction Refs
+  const yawRef = useRef<number>(0);
+  const pitchRef = useRef<number>(0.45);
+  const zoomRef = useRef<number>(1.0);
+  const isDraggingRef = useRef<boolean>(false);
+  const lastMousePosRef = useRef<{ x: number; y: number }>({ x: 0, y: 0 });
+
+  // Volumetric Particle Cloud Interface
+  interface ExpertParticle {
+    expert: string;
+    ox: number;
+    oy: number;
+    oz: number;
+    size: number;
+    color: string;
+  }
+  const particlesRef = useRef<ExpertParticle[]>([]);
+
+  // Dynamic Sprouted Experts State
+  const [sproutedExperts, setSproutedExperts] = useState<{ id: string; label: string; color: string; x: number; y: number; z: number }[]>([]);
+  const sproutingActiveRef = useRef<boolean>(false);
+  const sproutingProgressRef = useRef<number>(0);
+  const sproutingFilamentTargetRef = useRef<[number, number, number]>([0, 0, 0]);
+
+  // Firewall Threat Animation States
+  const firewallThreatActiveRef = useRef<boolean>(false);
+  const firewallThreatProgressRef = useRef<number>(0);
+  const firewallThreatPosRef = useRef<[number, number, number]>([0, 0, 0]);
+  const firewallFlashRef = useRef<number>(0); // Flashes red/cyan on event
+
+  // Anti-Entropy digest sweep
+  const antiEntropyPulseRef = useRef<number>(0);
+  const lastAntiEntropyTimeRef = useRef<number>(0);
+
+  // Semantic Memory Consolidation Animation States
+  const consolidationActiveRef = useRef<boolean>(false);
+  const consolidationProgressRef = useRef<number>(0);
+  const consolidationSourceRef = useRef<[number, number, number]>([0, 0, 0]);
+  const consolidationTargetRef = useRef<[number, number, number]>([0, 0, 0]);
+  const consolidationParticlesRef = useRef<{ x: number; y: number; z: number; progress: number; speed: number; delay: number }[]>([]);
+
 
 
   // Fetch status, metrics, peers, audit logs
@@ -215,6 +263,35 @@ export default function App() {
     currentVectorRef.current = [0, 0, 0];
   };
 
+  // Mouse and Touch Interaction Handlers for 3D Orbit
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    isDraggingRef.current = true;
+    lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    if (!isDraggingRef.current) return;
+    const dx = e.clientX - lastMousePosRef.current.x;
+    const dy = e.clientY - lastMousePosRef.current.y;
+    
+    // Update camera angles (yaw and pitch)
+    yawRef.current += dx * 0.007;
+    // Clamp pitch between -85 and 85 degrees to prevent gimbal lock
+    pitchRef.current = Math.max(-1.48, Math.min(1.48, pitchRef.current + dy * 0.007));
+    
+    lastMousePosRef.current = { x: e.clientX, y: e.clientY };
+  };
+
+  const handleMouseUpOrLeave = () => {
+    isDraggingRef.current = false;
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    // Zoom control
+    zoomRef.current = Math.max(0.4, Math.min(2.5, zoomRef.current + e.deltaY * 0.001));
+  };
+
+
 
   // Format UNIX timestamp to UTC string
   const formatUtc = (ts: number) => {
@@ -228,6 +305,87 @@ export default function App() {
     if (seconds < 60) return `${seconds}s`;
     if (seconds < 3600) return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
     return `${Math.floor(seconds / 3600)}h ${Math.floor((seconds % 3600) / 60)}m`;
+  };
+
+  // Trigger simulated threat (quarantine firewall animation)
+  const triggerSimulatedThreat = () => {
+    firewallThreatActiveRef.current = true;
+    firewallThreatProgressRef.current = 0;
+    // Set starting position at random outside boundary
+    firewallThreatPosRef.current = [1.3, 0.7, -0.6];
+    firewallFlashRef.current = 0;
+    
+    // Add warning audit line locally
+    if (auditData) {
+      setAuditData({
+        lines: [
+          { ts_utc: Date.now() / 1000, record: "[WARN] IMMUNOLOGY_FIREWALL: Rilevato vettore sospetto ad alto errore di ricostruzione (PRE > 0.05).", json: "{}" },
+          ...auditData.lines
+        ]
+      });
+    }
+  };
+
+  // Trigger simulated sprouting (OOD expert creation)
+  const triggerSimulatedSprouting = () => {
+    if (sproutingActiveRef.current) return;
+    
+    const count = sproutedExperts.length + 1;
+    const targetX = 0.5 + Math.random() * 0.4;
+    const targetY = -0.4 - Math.random() * 0.3;
+    const targetZ = -0.3 - Math.random() * 0.4;
+    
+    sproutingActiveRef.current = true;
+    sproutingProgressRef.current = 0;
+    sproutingFilamentTargetRef.current = [targetX, targetY, targetZ];
+    
+    // Add sprout logs
+    if (auditData) {
+      setAuditData({
+        lines: [
+          { ts_utc: Date.now() / 1000, record: `[INFO] COGNITIVE_ROUTER: Rilevato concetto OOD. Inizializzazione sprouting per nuovo modulo Esperto_${count}...`, json: "{}" },
+          ...auditData.lines
+        ]
+      });
+    }
+  };
+
+  // Trigger memory consolidation animation
+  const triggerSimulatedConsolidation = () => {
+    if (consolidationActiveRef.current) return;
+    
+    // Select target: random active expert
+    const expertKeys = ['Generale', 'Oncologia', 'HP-Folding'];
+    const targetKey = expertKeys[Math.floor(Math.random() * expertKeys.length)];
+    const targetExp = baseExperts[targetKey];
+    
+    // Starting position: a random spot on the episodic ring
+    const angle = Math.random() * Math.PI * 2;
+    const srcX = 0.9 * Math.cos(angle);
+    const srcY = 0.0;
+    const srcZ = 0.9 * Math.sin(angle);
+    
+    consolidationActiveRef.current = true;
+    consolidationProgressRef.current = 0;
+    consolidationSourceRef.current = [srcX, srcY, srcZ];
+    consolidationTargetRef.current = [targetExp.x, targetExp.y, targetExp.z];
+    consolidationParticlesRef.current = []; // will be generated in loop
+    
+    if (auditData) {
+      setAuditData({
+        lines: [
+          { ts_utc: Date.now() / 1000, record: `[INFO] MEMORY_CONSOLIDATOR: Avvio consolidamento memoria episodica a breve termine nel cluster ${targetKey} (lungo termine).`, json: "{}" },
+          ...auditData.lines
+        ]
+      });
+    }
+  };
+
+  // Reset 3D camera orientation
+  const resetCamera = () => {
+    yawRef.current = 0;
+    pitchRef.current = 0.45;
+    zoomRef.current = 1.0;
   };
 
   // Canvas HUD Projection Animation Loop
@@ -250,32 +408,64 @@ export default function App() {
       const centerY = height / 2;
       const radius = Math.min(width, height) * 0.40;
 
-      // 3D Projection Math
+      // 3D Projection Math with Interactive Drag & Zoom camera orientation
       const project3D = (x: number, y: number, z: number) => {
-        // Horizontal rotation over time (vertical axis)
-        const rotY = time * 0.0004;
+        // Horizontal rotation over time (vertical axis) + manual drag
+        const rotY = yawRef.current + time * 0.0001;
         const x1 = x * Math.cos(rotY) - z * Math.sin(rotY);
         const z1 = x * Math.sin(rotY) + z * Math.cos(rotY);
 
-        // Vertical tilt (slowly oscillating slightly for organic motion)
-        const tiltX = 0.45 + Math.sin(time * 0.00015) * 0.08;
+        // Vertical tilt + manual drag
+        const tiltX = pitchRef.current + Math.sin(time * 0.0001) * 0.03;
         const y2 = y * Math.cos(tiltX) + z1 * Math.sin(tiltX);
         const z2 = -y * Math.sin(tiltX) + z1 * Math.cos(tiltX);
-
 
         // Perspective scaling (camera distance)
         const cameraDistance = 2.5;
         const scale = cameraDistance / (cameraDistance + z2);
         
-        const sx = centerX + x1 * scale * radius;
-        const sy = centerY - y2 * scale * radius;
+        const sx = centerX + x1 * scale * radius * zoomRef.current;
+        const sy = centerY - y2 * scale * radius * zoomRef.current;
         
-        return { x: sx, y: sy, z: z2, scale };
+        return { x: sx, y: sy, z: z2, scale: scale * zoomRef.current };
       };
 
+      // Volumetric Particle Cloud Jitter (Brownian Motion)
+      if (particlesRef.current.length === 0) {
+        const list: ExpertParticle[] = [];
+        const colors: Record<string, string> = { Generale: '#10b981', Oncologia: '#ef4444', 'HP-Folding': '#a855f7' };
+        Object.entries(colors).forEach(([expName, color]) => {
+          for (let i = 0; i < 35; i++) {
+            const ox = (Math.random() + Math.random() + Math.random() - 1.5) * 0.12;
+            const oy = (Math.random() + Math.random() + Math.random() - 1.5) * 0.12;
+            const oz = (Math.random() + Math.random() + Math.random() - 1.5) * 0.12;
+            list.push({
+              expert: expName,
+              ox, oy, oz,
+              size: Math.random() * 1.5 + 0.6,
+              color
+            });
+          }
+        });
+        particlesRef.current = list;
+      }
+
+      // Add jitter to expert particles
+      particlesRef.current.forEach(p => {
+        p.ox += (Math.random() - 0.5) * 0.002;
+        p.oy += (Math.random() - 0.5) * 0.002;
+        p.oz += (Math.random() - 0.5) * 0.002;
+        const dist = Math.sqrt(p.ox*p.ox + p.oy*p.oy + p.oz*p.oz);
+        if (dist > 0.22) {
+          p.ox *= 0.9;
+          p.oy *= 0.9;
+          p.oz *= 0.9;
+        }
+      });
+
       // 1. Draw 3D Grid floor (concentric rings in X-Z plane)
-      const ringColor = 'rgba(6, 182, 212, 0.06)';
-      const ringColorDashed = 'rgba(6, 182, 212, 0.15)';
+      const ringColor = 'rgba(6, 182, 212, 0.05)';
+      const ringColorDashed = 'rgba(6, 182, 212, 0.12)';
       
       const drawXZRing = (r: number, color: string, isDashed = false) => {
         ctx.strokeStyle = color;
@@ -300,25 +490,25 @@ export default function App() {
         drawXZRing(i / 4, i === 4 ? ringColorDashed : ringColor, i === 4);
       }
 
-      // Vertical longitudinal/latitudinal outer rings (wireframe sphere envelope)
+      // 2. Draw outer wireframe sphere hoops (X-Y and Y-Z hoops at radius 0.6)
       const drawSphereWireframe = () => {
         // Y-Z hoop
-        ctx.strokeStyle = 'rgba(168, 85, 247, 0.04)';
+        ctx.strokeStyle = 'rgba(168, 85, 247, 0.03)';
         ctx.beginPath();
         for (let j = 0; j <= 64; j++) {
           const theta = (j / 64) * Math.PI * 2;
-          const pt = project3D(0, Math.cos(theta), Math.sin(theta));
+          const pt = project3D(0, 0.6 * Math.cos(theta), 0.6 * Math.sin(theta));
           if (j === 0) ctx.moveTo(pt.x, pt.y);
           else ctx.lineTo(pt.x, pt.y);
         }
         ctx.stroke();
 
         // X-Y hoop
-        ctx.strokeStyle = 'rgba(6, 182, 212, 0.04)';
+        ctx.strokeStyle = 'rgba(6, 182, 212, 0.03)';
         ctx.beginPath();
         for (let j = 0; j <= 64; j++) {
           const theta = (j / 64) * Math.PI * 2;
-          const pt = project3D(Math.cos(theta), Math.sin(theta), 0);
+          const pt = project3D(0.6 * Math.cos(theta), 0.6 * Math.sin(theta), 0);
           if (j === 0) ctx.moveTo(pt.x, pt.y);
           else ctx.lineTo(pt.x, pt.y);
         }
@@ -326,7 +516,48 @@ export default function App() {
       };
       drawSphereWireframe();
 
-      // Concentric Orbiting Dials on the X-Z plane rotating in opposite directions in 3D
+      // 3. Draw Anchor Concepts (Constellation of Gold Star axioms inside Rosetta core)
+      const anchors = [
+        { x: 0.15, y: 0.25, z: -0.20, label: 'Axiom-Ω' },
+        { x: -0.30, y: -0.15, z: 0.25, label: 'Planck-h' },
+        { x: 0.20, y: -0.25, z: -0.10, label: 'Newton-G' },
+        { x: -0.10, y: 0.35, z: 0.15, label: 'Dirac-e' },
+        { x: 0.35, y: 0.10, z: 0.30, label: 'Boltzmann-kB' },
+        { x: -0.25, y: 0.20, z: -0.35, label: 'Maxwell-c' },
+        { x: 0.30, y: -0.30, z: 0.20, label: 'Rosetta-π' },
+        { x: -0.35, y: -0.25, z: -0.15, label: 'Euler-φ' }
+      ];
+
+      // Draw constellation lines first
+      ctx.strokeStyle = 'rgba(254, 240, 138, 0.05)';
+      ctx.lineWidth = 1;
+      const connections = [[0, 1], [1, 5], [2, 6], [3, 7], [0, 4], [4, 7], [2, 3]];
+      connections.forEach(([i, j]) => {
+        const ptA = project3D(anchors[i].x, anchors[i].y, anchors[i].z);
+        const ptB = project3D(anchors[j].x, anchors[j].y, anchors[j].z);
+        if (isFinite(ptA.x) && isFinite(ptA.y) && isFinite(ptB.x) && isFinite(ptB.y)) {
+          ctx.beginPath();
+          ctx.moveTo(ptA.x, ptA.y);
+          ctx.lineTo(ptB.x, ptB.y);
+          ctx.stroke();
+        }
+      });
+
+      // Draw anchor dots
+      anchors.forEach(a => {
+        const pt = project3D(a.x, a.y, a.z);
+        const depthOpacity = Math.max(0.15, Math.min(0.8, 1 - (pt.z + 1.2) / 2.4));
+        ctx.fillStyle = `rgba(254, 240, 138, ${depthOpacity})`;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 2 * pt.scale, 0, Math.PI * 2);
+        ctx.fill();
+
+        ctx.fillStyle = `rgba(254, 240, 138, ${depthOpacity * 0.4})`;
+        ctx.font = `${Math.max(5, Math.floor(6.5 * pt.scale))}px "Share Tech Mono"`;
+        ctx.fillText(a.label, pt.x + 5 * pt.scale, pt.y + 2);
+      });
+
+      // 4. Concentric Orbiting Dials on the X-Z plane floor (gyroscope style)
       const rotAngle = time * 0.0008;
       
       const drawXZDial = (r: number, rotSpeed: number, color: string, dashes: number[]) => {
@@ -348,14 +579,11 @@ export default function App() {
         if (dashes.length > 0) ctx.setLineDash([]);
       };
 
-      // Outer purple ring (gyroscope style)
-      drawXZDial(1.05, 0.3, 'rgba(168, 85, 247, 0.15)', [20, 40]);
-      // Outer Counter-clockwise dial
-      drawXZDial(0.8, -0.6, 'rgba(6, 182, 212, 0.12)', [4, 15]);
-      // Inner Clockwise dial
-      drawXZDial(0.4, 0.9, 'rgba(168, 85, 247, 0.12)', [2, 8]);
+      drawXZDial(1.05, 0.25, 'rgba(168, 85, 247, 0.12)', [20, 40]);
+      drawXZDial(0.8, -0.5, 'rgba(6, 182, 212, 0.10)', [4, 15]);
+      drawXZDial(0.4, 0.7, 'rgba(168, 85, 247, 0.10)', [2, 8]);
 
-      // 2. Draw 3D coordinate axes
+      // 5. Draw 3D coordinate axes
       const axes = [
         { start: [-1.1, 0, 0], end: [1.1, 0, 0], label: 'X', color: 'rgba(6, 182, 212, 0.15)' },
         { start: [0, -1.1, 0], end: [0, 1.1, 0], label: 'Y', color: 'rgba(168, 85, 247, 0.15)' },
@@ -376,56 +604,59 @@ export default function App() {
         ctx.fillText(axis.label, ptE.x + 4, ptE.y + 3);
       });
 
-      // Outer rings corner brackets (flat HUD overlay)
-      ctx.strokeStyle = 'rgba(6, 182, 212, 0.3)';
-      ctx.lineWidth = 1;
-      const bracketSize = 15;
-      ctx.beginPath();
-      ctx.moveTo(10, 10 + bracketSize); ctx.lineTo(10, 10); ctx.lineTo(10 + bracketSize, 10);
-      ctx.moveTo(width - 10, 10 + bracketSize); ctx.lineTo(width - 10, 10); ctx.lineTo(width - 10 - bracketSize, 10);
-      ctx.moveTo(10, height - 10 - bracketSize); ctx.lineTo(10, height - 10); ctx.lineTo(10 + bracketSize, height - 10);
-      ctx.moveTo(width - 10, height - 10 - bracketSize); ctx.lineTo(width - 10, height - 10); ctx.lineTo(width - 10 - bracketSize, height - 10);
-      ctx.stroke();
+      // 6. Define active experts (base + sprouted)
+      const experts3d: Record<string, { x: number; y: number; z: number; color: string; label: string }> = { ...baseExperts };
+      sproutedExperts.forEach(exp => {
+        experts3d[exp.id] = { x: exp.x, y: exp.y, z: exp.z, color: exp.color, label: exp.label };
+      });
 
-      // 3. Define Expert Coordinates (matching backend 3D vectors or fallback)
-      const experts3d: Record<string, { x: number; y: number; z: number; color: string; label: string }> = {
-        'Generale': { 
-          x: lastProjection?.experts_3d?.Generale?.[0] ?? 0.60, 
-          y: lastProjection?.experts_3d?.Generale?.[1] ?? 0.40, 
-          z: lastProjection?.experts_3d?.Generale?.[2] ?? 0.20, 
-          color: '#10b981', 
-          label: 'Centr. Generale (Ω)' 
-        },
-        'Oncologia': { 
-          x: lastProjection?.experts_3d?.Oncologia?.[0] ?? -0.50, 
-          y: lastProjection?.experts_3d?.Oncologia?.[1] ?? 0.70, 
-          z: lastProjection?.experts_3d?.Oncologia?.[2] ?? -0.40, 
-          color: '#ef4444', 
-          label: 'Centr. Oncologia' 
-        },
-        'HP-Folding': { 
-          x: lastProjection?.experts_3d?.['HP-Folding']?.[0] ?? 0.70, 
-          y: lastProjection?.experts_3d?.['HP-Folding']?.[1] ?? -0.50, 
-          z: lastProjection?.experts_3d?.['HP-Folding']?.[2] ?? 0.50, 
-          color: '#a855f7', 
-          label: 'Centr. HP-Folding' 
+      // Draw volumetric particle clouds (Expert density clouds)
+      particlesRef.current.forEach(p => {
+        const exp = experts3d[p.expert];
+        if (!exp) return;
+        const px = exp.x + p.ox;
+        const py = exp.y + p.oy;
+        const pz = exp.z + p.oz;
+        const pt = project3D(px, py, pz);
+        if (!isFinite(pt.x) || !isFinite(pt.y)) return;
+
+        const depthOpacity = Math.max(0.1, Math.min(0.7, 1 - (pt.z + 1.2) / 2.4));
+        ctx.fillStyle = `${p.color}${Math.floor(depthOpacity * 80).toString(16).padStart(2, '0')}`;
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, p.size * pt.scale, 0, Math.PI * 2);
+        ctx.fill();
+      });
+
+      // Draw dynamic sprouted expert particles if active
+      sproutedExperts.forEach(exp => {
+        for (let i = 0; i < 20; i++) {
+          const jitterAngle = (i / 20) * Math.PI * 2 + time * 0.001;
+          const r = 0.04 + Math.sin(time * 0.005 + i) * 0.015;
+          const px = exp.x + r * Math.cos(jitterAngle);
+          const py = exp.y + Math.sin(time * 0.002 + i) * 0.03;
+          const pz = exp.z + r * Math.sin(jitterAngle);
+          const pt = project3D(px, py, pz);
+          if (!isFinite(pt.x) || !isFinite(pt.y)) continue;
+          
+          const depthOpacity = Math.max(0.1, Math.min(0.6, 1 - (pt.z + 1.2) / 2.4));
+          ctx.fillStyle = `${exp.color}${Math.floor(depthOpacity * 70).toString(16).padStart(2, '0')}`;
+          ctx.beginPath();
+          ctx.arc(pt.x, pt.y, pt.scale, 0, Math.PI * 2);
+          ctx.fill();
         }
-      };
+      });
 
-      // Draw expert centroids in 3D (sorted by depth Z for correct layering)
+      // Draw expert centroids in 3D (sorted by depth Z for layering)
       const projectedExperts = Object.entries(experts3d).map(([name, exp]) => {
         const pt = project3D(exp.x, exp.y, exp.z);
         return { name, exp, pt };
       });
       
-      // Sort so deeper ones (larger Z) are drawn first
       projectedExperts.sort((a, b) => b.pt.z - a.pt.z);
 
-      projectedExperts.forEach(({ name, exp, pt }) => {
-        // Opacity and size based on depth (from near to far)
+      projectedExperts.forEach(({ exp, pt }) => {
         const depthOpacity = Math.max(0.2, Math.min(1.0, 1 - (pt.z + 1.2) / 2.4));
         
-        // Outer glow circle
         ctx.fillStyle = `${exp.color}${Math.floor(depthOpacity * 12).toString(16).padStart(2, '0')}`;
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, 14 * pt.scale, 0, Math.PI * 2);
@@ -437,19 +668,17 @@ export default function App() {
         ctx.arc(pt.x, pt.y, 8 * pt.scale, 0, Math.PI * 2);
         ctx.stroke();
 
-        // Inner solid dot
         ctx.fillStyle = exp.color;
         ctx.beginPath();
         ctx.arc(pt.x, pt.y, 3.5 * pt.scale, 0, Math.PI * 2);
         ctx.fill();
 
-        // Label facing the screen
         ctx.fillStyle = `rgba(243, 244, 246, ${0.25 + depthOpacity * 0.4})`;
         ctx.font = `${Math.max(6, Math.floor(9 * pt.scale))}px "Share Tech Mono"`;
         ctx.fillText(exp.label, pt.x + 10 * pt.scale, pt.y + 3);
       });
 
-      // 4. Smooth Vector Interpolation
+      // 7. Vector Interpolation & Render
       const tx = targetVectorRef.current[0] ?? 0;
       const ty = targetVectorRef.current[1] ?? 0;
       const tz = targetVectorRef.current[2] ?? 0;
@@ -473,18 +702,8 @@ export default function App() {
 
       const hasActiveProjection = lastProjection !== null;
 
-      // Increment/decrement target lock progress
-      if (hasActiveProjection) {
-        if (lockProgressRef.current < 1) {
-          lockProgressRef.current = Math.min(1, lockProgressRef.current + 0.04);
-        }
-      } else {
-        lockProgressRef.current = 0;
-      }
-
-      if (hasActiveProjection) {
+      if (hasActiveProjection && !firewallThreatActiveRef.current) {
         const opt = project3D(0, 0, 0);
-        // Draw path line from center (0,0,0) to current v_omega in 3D
         if (isFinite(opt.x) && isFinite(opt.y) && isFinite(vpt.x) && isFinite(vpt.y)) {
           ctx.strokeStyle = 'rgba(6, 182, 212, 0.4)';
           ctx.lineWidth = 1.5;
@@ -496,7 +715,6 @@ export default function App() {
           ctx.setLineDash([]);
         }
 
-        // Draw coordinate floor projection line (X-Z plane drop line)
         const floorPt = project3D(cvx, 0, cvz);
         if (isFinite(vpt.x) && isFinite(vpt.y) && isFinite(floorPt.x) && isFinite(floorPt.y)) {
           ctx.strokeStyle = 'rgba(6, 182, 212, 0.2)';
@@ -508,14 +726,12 @@ export default function App() {
           ctx.stroke();
           ctx.setLineDash([]);
           
-          // Floor point marker
           ctx.fillStyle = 'rgba(6, 182, 212, 0.25)';
           ctx.beginPath();
           ctx.arc(floorPt.x, floorPt.y, 2, 0, Math.PI * 2);
           ctx.fill();
         }
 
-        // Draw routing alignment line from v_omega to nearest expert centroid in 3D
         const route = lastProjection?.routing;
         if (route && experts3d[route]) {
           const exp = experts3d[route];
@@ -533,7 +749,6 @@ export default function App() {
           }
         }
 
-        // Draw pulsating projection vector
         const pulse = (Math.sin(time * 0.007) * 4 + 10) * vpt.scale;
         if (isFinite(vpt.x) && isFinite(vpt.y) && isFinite(pulse) && pulse > 0) {
           const grad = ctx.createRadialGradient(vpt.x, vpt.y, 1, vpt.x, vpt.y, pulse);
@@ -551,56 +766,42 @@ export default function App() {
           ctx.fill();
         }
 
-
-        // Target Clamping Lock Brackets (Iron Man Style sweep in and lock)
         const bracketOffset = (1 - lockProgressRef.current) * 25 + 10;
         const bSize = 6;
         ctx.strokeStyle = `rgba(6, 182, 212, ${0.4 + lockProgressRef.current * 0.5})`;
         ctx.lineWidth = 1.5;
         
-        // Top-Left
         ctx.beginPath();
         ctx.moveTo(vpt.x - bracketOffset, vpt.y - bracketOffset + bSize);
         ctx.lineTo(vpt.x - bracketOffset, vpt.y - bracketOffset);
         ctx.lineTo(vpt.x - bracketOffset + bSize, vpt.y - bracketOffset);
-        ctx.stroke();
-
-        // Top-Right
-        ctx.beginPath();
+        
         ctx.moveTo(vpt.x + bracketOffset, vpt.y - bracketOffset + bSize);
         ctx.lineTo(vpt.x + bracketOffset, vpt.y - bracketOffset);
         ctx.lineTo(vpt.x + bracketOffset - bSize, vpt.y - bracketOffset);
-        ctx.stroke();
-
-        // Bottom-Left
-        ctx.beginPath();
+        
         ctx.moveTo(vpt.x - bracketOffset, vpt.y + bracketOffset - bSize);
         ctx.lineTo(vpt.x - bracketOffset, vpt.y + bracketOffset);
         ctx.lineTo(vpt.x - bracketOffset + bSize, vpt.y + bracketOffset);
-        ctx.stroke();
-
-        // Bottom-Right
-        ctx.beginPath();
+        
         ctx.moveTo(vpt.x + bracketOffset, vpt.y + bracketOffset - bSize);
         ctx.lineTo(vpt.x + bracketOffset, vpt.y + bracketOffset);
         ctx.lineTo(vpt.x + bracketOffset - bSize, vpt.y + bracketOffset);
         ctx.stroke();
 
-        // Vector labels
         ctx.fillStyle = '#f3f4f6';
         ctx.font = '10px "Share Tech Mono"';
         ctx.fillText(`Vector Omega (v_ω)`, vpt.x + 12, vpt.y - 12);
         ctx.fillStyle = 'rgba(6, 182, 212, 0.8)';
         ctx.fillText(`[X: ${cvx.toFixed(3)}, Y: ${cvy.toFixed(3)}, Z: ${cvz.toFixed(3)}]`, vpt.x + 12, vpt.y - 2);
-      } else {
-        // Draw hovering idle scanning vector in 3D
+      } else if (!firewallThreatActiveRef.current) {
         const idleX = Math.sin(time * 0.001) * 0.3;
         const idleY = Math.cos(time * 0.0008) * 0.3;
         const idleZ = Math.sin(time * 0.0012) * 0.2;
         targetVectorRef.current = [idleX, idleY, idleZ];
 
         const pulse = (Math.sin(time * 0.005) * 2 + 6) * vpt.scale;
-        ctx.fillStyle = 'rgba(6, 182, 212, 0.15)';
+        ctx.fillStyle = 'rgba(6, 182, 212, 0.12)';
         ctx.beginPath();
         ctx.arc(vpt.x, vpt.y, pulse, 0, Math.PI * 2);
         ctx.fill();
@@ -610,13 +811,273 @@ export default function App() {
         ctx.arc(vpt.x, vpt.y, 2.5 * vpt.scale, 0, Math.PI * 2);
         ctx.fill();
 
-        // Center coordinate label
         ctx.fillStyle = 'rgba(6, 182, 212, 0.3)';
         ctx.font = '9px "Share Tech Mono"';
         ctx.fillText("Allineatore Rosetta Attivo (Scan)", vpt.x + 8, vpt.y - 4);
       }
 
-      // 5. Draw live digital matrix overlays (top-left metadata)
+      // 8. Dynamic Sprouting Animation (Germogliazione)
+      if (sproutingActiveRef.current) {
+        sproutingProgressRef.current = Math.min(1.0, sproutingProgressRef.current + 0.008);
+        
+        const startPt = project3D(0, 0, 0);
+        const [tx, ty, tz] = sproutingFilamentTargetRef.current;
+        const fx = tx * sproutingProgressRef.current;
+        const fy = ty * sproutingProgressRef.current;
+        const fz = tz * sproutingProgressRef.current;
+        const filamentPt = project3D(fx, fy, fz);
+
+        // Micro-camera shift/vibration
+        yawRef.current += Math.sin(sproutingProgressRef.current * Math.PI * 8) * 0.002;
+
+        if (isFinite(startPt.x) && isFinite(startPt.y) && isFinite(filamentPt.x) && isFinite(filamentPt.y)) {
+          ctx.strokeStyle = 'rgba(245, 158, 11, 0.8)'; // Amber sprout filament
+          ctx.lineWidth = 2;
+          ctx.beginPath();
+          ctx.moveTo(startPt.x, startPt.y);
+          ctx.lineTo(filamentPt.x, filamentPt.y);
+          ctx.stroke();
+
+          ctx.fillStyle = '#f59e0b';
+          ctx.beginPath();
+          ctx.arc(filamentPt.x, filamentPt.y, 4 * filamentPt.scale, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#f3f4f6';
+          ctx.font = '9px "Share Tech Mono"';
+          ctx.fillText(`GERMOGLIAZIONE: Esperto_${sproutedExperts.length + 1} (${Math.floor(sproutingProgressRef.current*100)}%)`, filamentPt.x + 10, filamentPt.y - 4);
+        }
+
+        if (sproutingProgressRef.current >= 1.0) {
+          sproutingActiveRef.current = false;
+          const nextCount = sproutedExperts.length + 1;
+          const newExpName = `Esperto_${nextCount}`;
+          const newExp = {
+            id: newExpName,
+            label: `Centr. ${newExpName} (OOD)`,
+            color: '#f59e0b',
+            x: tx, y: ty, z: tz
+          };
+          setSproutedExperts([...sproutedExperts, newExp]);
+        }
+      }
+
+      // 9. Semantic Immunology Firewall & Threat Quarantine
+      if (firewallThreatActiveRef.current) {
+        firewallThreatProgressRef.current = Math.min(1.0, firewallThreatProgressRef.current + 0.015);
+        const progress = firewallThreatProgressRef.current;
+
+        // Path of threat vector: starts at [1.3, 0.7, -0.6] and enters system
+        let tx = 1.3 * (1 - progress);
+        let ty = 0.7 * (1 - progress);
+        let tz = -0.6 * (1 - progress);
+        
+        const cagePos: [number, number, number] = [1.2, -0.8, 0.4];
+
+        if (progress > 0.65) {
+          // Hits shield and gets quarantined (redirected to quarantine cage)
+          const redirectProgress = (progress - 0.65) / 0.35;
+          tx = 0 * (1 - redirectProgress) + cagePos[0] * redirectProgress;
+          ty = 0.35 * (1 - redirectProgress) + cagePos[1] * redirectProgress;
+          tz = 0 * (1 - redirectProgress) + cagePos[2] * redirectProgress;
+          firewallFlashRef.current = Math.max(0, 1 - (progress - 0.65) * 3); // Flash decay
+        }
+
+        const threatPt = project3D(tx, ty, tz);
+        
+        // Draw the concentric protection shield
+        const shieldColor = firewallFlashRef.current > 0 
+          ? `rgba(239, 68, 68, ${0.15 + firewallFlashRef.current * 0.4})` 
+          : 'rgba(6, 182, 212, 0.07)';
+        ctx.strokeStyle = shieldColor;
+        ctx.lineWidth = 2;
+        drawXZRing(1.15, shieldColor, false);
+
+        if (isFinite(threatPt.x) && isFinite(threatPt.y)) {
+          // Render threat point
+          ctx.fillStyle = '#ef4444';
+          ctx.beginPath();
+          ctx.arc(threatPt.x, threatPt.y, 5 * threatPt.scale, 0, Math.PI * 2);
+          ctx.fill();
+
+          ctx.fillStyle = '#ef4444';
+          ctx.font = '8px "Share Tech Mono"';
+          ctx.fillText(`ALERT: PAYLOAD_SPAM // PRE: 0.1843`, threatPt.x + 10, threatPt.y - 4);
+
+          // Draw laser blast when hitting shield
+          if (progress >= 0.65 && progress < 0.8) {
+            const shieldPt = project3D(1.15 * Math.cos(time * 0.005), 0, 1.15 * Math.sin(time * 0.005));
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.9)';
+            ctx.lineWidth = 3;
+            ctx.beginPath();
+            ctx.moveTo(shieldPt.x, shieldPt.y);
+            ctx.lineTo(threatPt.x, threatPt.y);
+            ctx.stroke();
+          }
+
+          // Draw Quarantine Cage at [1.2, -0.8, 0.4]
+          const cageCenter = project3D(cagePos[0], cagePos[1], cagePos[2]);
+          if (isFinite(cageCenter.x) && isFinite(cageCenter.y)) {
+            const cSize = 25 * cageCenter.scale;
+            ctx.strokeStyle = 'rgba(239, 68, 68, 0.5)';
+            ctx.lineWidth = 1;
+            ctx.strokeRect(cageCenter.x - cSize/2, cageCenter.y - cSize/2, cSize, cSize);
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.1)';
+            ctx.fillRect(cageCenter.x - cSize/2, cageCenter.y - cSize/2, cSize, cSize);
+            ctx.fillStyle = '#ef4444';
+            ctx.font = '7px "Share Tech Mono"';
+            ctx.fillText("QUARANTENA", cageCenter.x - cSize/2, cageCenter.y - cSize/2 - 2);
+          }
+        }
+
+        if (progress >= 1.0) {
+          firewallThreatActiveRef.current = false;
+        }
+      }
+
+      // 10. Double Memory Store (Episodic Memory Ring turns & Consolidation)
+      const episodicTurns = chatMessages.slice(-5);
+      const turnsCount = episodicTurns.length;
+      if (turnsCount > 0) {
+        episodicTurns.forEach((turn, idx) => {
+          const angle = (idx * 2 * Math.PI / turnsCount) + time * 0.00015;
+          const rx = 0.95 * Math.cos(angle);
+          const ry = 0.1 * Math.sin(time * 0.0015 + idx);
+          const rz = 0.95 * Math.sin(angle);
+          const pt = project3D(rx, ry, rz);
+
+          if (isFinite(pt.x) && isFinite(pt.y)) {
+            // Draw capsule
+            const cColor = turn.role === 'user' ? 'rgba(168, 85, 247, 0.3)' : 'rgba(6, 182, 212, 0.3)';
+            const cBg = turn.role === 'user' ? 'rgba(168, 85, 247, 0.08)' : 'rgba(6, 182, 212, 0.08)';
+            ctx.strokeStyle = cColor;
+            ctx.fillStyle = cBg;
+            ctx.lineWidth = 1;
+            
+            const w = 40 * pt.scale;
+            const h = 14 * pt.scale;
+            ctx.beginPath();
+            ctx.roundRect(pt.x - w/2, pt.y - h/2, w, h, 4);
+            ctx.fill();
+            ctx.stroke();
+
+            // Label
+            ctx.fillStyle = '#f3f4f6';
+            ctx.font = `${Math.max(5, Math.floor(7 * pt.scale))}px "Share Tech Mono"`;
+            const labelText = turn.role === 'user' ? `USER` : `AI`;
+            ctx.fillText(labelText, pt.x - 10 * pt.scale, pt.y + 2.5 * pt.scale);
+          }
+        });
+      }
+
+      // Semantic Consolidation Particles Stream
+      if (consolidationActiveRef.current) {
+        consolidationProgressRef.current = Math.min(1.0, consolidationProgressRef.current + 0.015);
+        const progress = consolidationProgressRef.current;
+
+        // Initialize particles if empty
+        if (consolidationParticlesRef.current.length === 0) {
+          const parts = [];
+          for (let i = 0; i < 20; i++) {
+            parts.push({
+              x: consolidationSourceRef.current[0],
+              y: consolidationSourceRef.current[1],
+              z: consolidationSourceRef.current[2],
+              progress: 0,
+              speed: 0.015 + Math.random() * 0.02,
+              delay: Math.random() * 0.3
+            });
+          }
+          consolidationParticlesRef.current = parts;
+        }
+
+        // Draw and update each consolidation particle
+        const [tx, ty, tz] = consolidationTargetRef.current;
+        consolidationParticlesRef.current.forEach(p => {
+          if (progress > p.delay) {
+            p.progress = Math.min(1.0, p.progress + p.speed);
+          }
+          const px = p.x * (1 - p.progress) + tx * p.progress + (Math.random() - 0.5) * 0.04;
+          const py = p.y * (1 - p.progress) + ty * p.progress + (Math.random() - 0.5) * 0.04;
+          const pz = p.z * (1 - p.progress) + tz * p.progress + (Math.random() - 0.5) * 0.04;
+          const pt = project3D(px, py, pz);
+
+          if (isFinite(pt.x) && isFinite(pt.y) && p.progress < 1.0) {
+            ctx.fillStyle = 'rgba(6, 182, 212, 0.8)';
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, 1.5 * pt.scale, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        });
+
+        if (progress >= 1.0) {
+          consolidationActiveRef.current = false;
+          consolidationParticlesRef.current = [];
+        }
+      }
+
+      // 11. Gossip UDP Links & Anti-Entropy Pulses
+      const gossipPeers = [
+        { name: 'Guardiano-C', x: -1.3, y: -0.2, z: 0.4, color: '#06b6d4' },
+        { name: 'Guardiano-D', x: 1.2, y: 0.3, z: -0.5, color: '#a855f7' }
+      ];
+
+      gossipPeers.forEach(peer => {
+        const pt = project3D(peer.x, peer.y, peer.z);
+        const opt = project3D(0, 0, 0);
+
+        if (isFinite(pt.x) && isFinite(pt.y) && isFinite(opt.x) && isFinite(opt.y)) {
+          // Draw peer link
+          ctx.strokeStyle = 'rgba(6, 182, 212, 0.07)';
+          ctx.lineWidth = 1;
+          ctx.beginPath();
+          ctx.moveTo(opt.x, opt.y);
+          ctx.lineTo(pt.x, pt.y);
+          ctx.stroke();
+
+          // Draw peer server node
+          ctx.strokeStyle = peer.color + '44';
+          ctx.fillStyle = 'rgba(17, 24, 39, 0.6)';
+          ctx.lineWidth = 1;
+          const size = 12 * pt.scale;
+          ctx.strokeRect(pt.x - size/2, pt.y - size/2, size, size);
+          ctx.fillRect(pt.x - size/2, pt.y - size/2, size, size);
+
+          ctx.fillStyle = 'rgba(243, 244, 246, 0.4)';
+          ctx.font = '7px "Share Tech Mono"';
+          ctx.fillText(peer.name, pt.x - 18, pt.y - size/2 - 2);
+
+          // Draw envelope packet traveling
+          const gossipProgress = (time * 0.0004) % 1.0;
+          const epx = peer.x * (1 - gossipProgress);
+          const epy = peer.y * (1 - gossipProgress);
+          const epz = peer.z * (1 - gossipProgress);
+          const envelopePt = project3D(epx, epy, epz);
+          if (isFinite(envelopePt.x) && isFinite(envelopePt.y)) {
+            ctx.fillStyle = '#06b6d4';
+            ctx.beginPath();
+            ctx.arc(envelopePt.x, envelopePt.y, 2 * envelopePt.scale, 0, Math.PI * 2);
+            ctx.fill();
+          }
+        }
+      });
+
+      // Anti-Entropy digest sweep (every 10 seconds)
+      const elapsed = time - lastAntiEntropyTimeRef.current;
+      if (elapsed > 10000) {
+        lastAntiEntropyTimeRef.current = time;
+        antiEntropyPulseRef.current = 0;
+      }
+      
+      antiEntropyPulseRef.current = Math.min(1.0, antiEntropyPulseRef.current + 0.012);
+      const sweepRad = antiEntropyPulseRef.current * 1.5;
+      if (sweepRad > 0 && sweepRad < 1.5) {
+        ctx.strokeStyle = `rgba(16, 185, 129, ${0.3 * (1 - antiEntropyPulseRef.current)})`;
+        ctx.lineWidth = 1.5;
+        drawXZRing(sweepRad, ctx.strokeStyle, false);
+      }
+
+      // 12. Draw live digital matrix overlays (top-left metadata)
       ctx.fillStyle = 'rgba(6, 182, 212, 0.4)';
       ctx.font = '8px "Share Tech Mono"';
       ctx.fillText(`SHD_DIM: 64D | ALIGN_TOL: 0.005`, 18, 26);
@@ -638,12 +1099,11 @@ export default function App() {
       animationFrameRef.current = requestAnimationFrame(render);
     };
 
-
     animationFrameRef.current = requestAnimationFrame(render);
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     };
-  }, [lastProjection, status]);
+  }, [lastProjection, status, sproutedExperts, chatMessages]);
 
   // Handle status indicators
   const isOnline = status?.signer_online;
@@ -857,7 +1317,32 @@ export default function App() {
               {/* Holographic HUD Column */}
               <div className="hud-column">
                 <div className="latent-viz-box">
-                  <canvas ref={canvasRef} className="latent-canvas" />
+                  <canvas 
+                    ref={canvasRef} 
+                    className="latent-canvas" 
+                    onMouseDown={handleMouseDown}
+                    onMouseMove={handleMouseMove}
+                    onMouseUp={handleMouseUpOrLeave}
+                    onMouseLeave={handleMouseUpOrLeave}
+                    onWheel={handleWheel}
+                  />
+                  
+                  {/* Floating Simulation Toolbar */}
+                  <div className="hud-sim-toolbar">
+                    <span className="hud-sim-title digital-font">SIMULATORE:</span>
+                    <button className="hud-sim-btn sprout" onClick={triggerSimulatedSprouting} title="Simula sprouting di un nuovo esperto per concetto OOD">
+                      <span>🌱</span> SPROUT
+                    </button>
+                    <button className="hud-sim-btn threat" onClick={triggerSimulatedThreat} title="Simula anomalia semantica ad alto PRE messa in quarantena">
+                      <span>🛡️</span> MINACCIA
+                    </button>
+                    <button className="hud-sim-btn consolidate" onClick={triggerSimulatedConsolidation} title="Simula consolidamento da memoria a breve a lungo termine">
+                      <span>⚡</span> CONSOLIDA
+                    </button>
+                    <button className="hud-sim-btn reset" onClick={resetCamera} title="Resetta zoom e angolazione della telecamera 3D">
+                      <span>🔄</span> RESET CAM
+                    </button>
+                  </div>
                 </div>
 
                 {/* Metrics Readouts */}
