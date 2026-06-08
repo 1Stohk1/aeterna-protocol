@@ -1,0 +1,32 @@
+syntax = "proto3";
+package aeterna.guardian.v1;
+
+import "amino/amino.proto";
+import "cosmos/msg/v1/msg.proto";
+import "cosmos_proto/cosmos.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/aeterna-protocol/aeterna/chain/x/guardian/types";
+
+service Msg {
+  option (cosmos.msg.v1.service) = true;
+
+  // MintGuardianSBT registers a new node and mints a Soulbound Token.
+  rpc MintGuardianSBT(MsgMintGuardianSBT) returns (MsgMintGuardianSBTResponse);
+}
+
+message MsgMintGuardianSBT {
+  option (cosmos.msg.v1.signer) = "creator";
+  option (amino.name)           = "aeterna/MsgMintGuardianSBT";
+
+  string creator               = 1 [(cosmos_proto.scalar) = "cosmos.AddressString"];
+  bytes  dilithium_pubkey      = 2; // Dilithium-5 public key bytes
+  bytes  tpm2_attestation      = 3; // TPM2 attestation quote bytes
+  bytes  tpm2_signature        = 4; // TPM2 quote signature bytes
+  string manifesto_hash        = 5; // SHA-256 of locally signed MANIFESTO.md
+  uint32 trust_tier            = 6; // Assigned tier (e.g. 1 = Guardiano, 2 = Santuario)
+}
+
+message MsgMintGuardianSBTResponse {
+  string sbt_id                = 1;
+}
