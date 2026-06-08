@@ -101,6 +101,7 @@ export default function App() {
   // Interpolated vector for smooth movement in Canvas
   const currentVectorRef = useRef<[number, number]>([0, 0]);
   const targetVectorRef = useRef<[number, number]>([0, 0]);
+  const lockProgressRef = useRef<number>(0);
 
   // Fetch status, metrics, peers, audit logs
   const fetchData = async () => {
@@ -280,6 +281,25 @@ export default function App() {
       ctx.arc(centerX, centerY, radius * 1.05, rotationAngle + Math.PI, rotationAngle + Math.PI * 1.4);
       ctx.stroke();
 
+      // Concentric Orbiting Dials (Concentric Rings rotating in opposite directions)
+      // Outer Counter-clockwise dial
+      ctx.strokeStyle = 'rgba(6, 182, 212, 0.12)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([4, 15]);
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius * 0.8, -rotationAngle * 0.6, -rotationAngle * 0.6 + Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      // Inner Clockwise dial
+      ctx.strokeStyle = 'rgba(168, 85, 247, 0.12)';
+      ctx.lineWidth = 1;
+      ctx.setLineDash([2, 8]);
+      ctx.beginPath();
+      ctx.arc(centerX, centerY, radius * 0.4, rotationAngle * 0.9, rotationAngle * 0.9 + Math.PI * 2);
+      ctx.stroke();
+      ctx.setLineDash([]);
+
       // Outer rings corner brackets
       ctx.strokeStyle = 'rgba(6, 182, 212, 0.3)';
       ctx.lineWidth = 1;
@@ -304,7 +324,6 @@ export default function App() {
 
       // 3. Define Expert Coordinates (matching backend 2D vectors)
       // Generale: [0.70, 0.50], Oncologia: [0.15, 0.85], HP-Folding: [0.80, -0.35]
-      // In Cartesian, standard canvas y increases downwards, so we negate y scaling
       const experts: Record<string, { x: number; y: number; color: string; label: string }> = {
         'Generale': { x: 0.60, y: 0.40, color: '#10b981', label: 'Centr. Generale (Ω)' },
         'Oncologia': { x: -0.50, y: 0.70, color: '#ef4444', label: 'Centr. Oncologia' },
@@ -351,6 +370,15 @@ export default function App() {
 
       const hasActiveProjection = lastProjection !== null;
 
+      // Increment/decrement target lock progress
+      if (hasActiveProjection) {
+        if (lockProgressRef.current < 1) {
+          lockProgressRef.current = Math.min(1, lockProgressRef.current + 0.04);
+        }
+      } else {
+        lockProgressRef.current = 0;
+      }
+
       if (hasActiveProjection) {
         // Draw path line from center (0,0) to v_omega
         ctx.strokeStyle = 'rgba(6, 182, 212, 0.4)';
@@ -395,6 +423,40 @@ export default function App() {
         ctx.arc(vx, vy, 4, 0, Math.PI * 2);
         ctx.fill();
 
+        // Target Clamping Lock Brackets (Iron Man Style sweep in and lock)
+        const bracketOffset = (1 - lockProgressRef.current) * 25 + 10;
+        const bSize = 6;
+        ctx.strokeStyle = `rgba(6, 182, 212, ${0.4 + lockProgressRef.current * 0.5})`;
+        ctx.lineWidth = 1.5;
+        
+        // Top-Left
+        ctx.beginPath();
+        ctx.moveTo(vx - bracketOffset, vy - bracketOffset + bSize);
+        ctx.lineTo(vx - bracketOffset, vy - bracketOffset);
+        ctx.lineTo(vx - bracketOffset + bSize, vy - bracketOffset);
+        ctx.stroke();
+
+        // Top-Right
+        ctx.beginPath();
+        ctx.moveTo(vx + bracketOffset, vy - bracketOffset + bSize);
+        ctx.lineTo(vx + bracketOffset, vy - bracketOffset);
+        ctx.lineTo(vx + bracketOffset - bSize, vy - bracketOffset);
+        ctx.stroke();
+
+        // Bottom-Left
+        ctx.beginPath();
+        ctx.moveTo(vx - bracketOffset, vy + bracketOffset - bSize);
+        ctx.lineTo(vx - bracketOffset, vy + bracketOffset);
+        ctx.lineTo(vx - bracketOffset + bSize, vy + bracketOffset);
+        ctx.stroke();
+
+        // Bottom-Right
+        ctx.beginPath();
+        ctx.moveTo(vx + bracketOffset, vy + bracketOffset - bSize);
+        ctx.lineTo(vx + bracketOffset, vy + bracketOffset);
+        ctx.lineTo(vx + bracketOffset - bSize, vy + bracketOffset);
+        ctx.stroke();
+
         // Vector labels
         ctx.fillStyle = '#f3f4f6';
         ctx.font = '10px "Share Tech Mono"';
@@ -424,7 +486,7 @@ export default function App() {
         ctx.fillText("Allineatore Rosetta Attivo (Scan)", vx + 8, vy - 4);
       }
 
-      // 5. Draw live digital matrix overlays (top-left metadata / bottom-right coordinates)
+      // 5. Draw live digital matrix overlays (top-left metadata)
       ctx.fillStyle = 'rgba(6, 182, 212, 0.4)';
       ctx.font = '8px "Share Tech Mono"';
       ctx.fillText(`SHD_DIM: 64D | ALIGN_TOL: 0.005`, 18, 26);
@@ -433,6 +495,15 @@ export default function App() {
       const statusText = status?.ready ? "SYS_OK // ALIGNED" : (status?.sealed ? "SYS_SEALED" : "SYS_WAIT_INIT");
       ctx.fillStyle = status?.ready ? 'rgba(16, 185, 129, 0.6)' : 'rgba(239, 68, 68, 0.6)';
       ctx.fillText(`STATUS: ${statusText}`, 18, 50);
+
+      // Draw hex stream code rain on the right side of the Canvas
+      ctx.fillStyle = 'rgba(6, 182, 212, 0.15)';
+      ctx.font = '8px "Share Tech Mono"';
+      for (let i = 0; i < 8; i++) {
+        const streamY = ((time * 0.05 + i * 50) % (height - 40)) + 20;
+        const randomHex = Math.floor(Math.sin(Math.floor(time / 150) + i) * 65535).toString(16).toUpperCase();
+        ctx.fillText(`0x${randomHex.padStart(4, '0')}`, width - 60, streamY);
+      }
 
       animationFrameRef.current = requestAnimationFrame(render);
     };
