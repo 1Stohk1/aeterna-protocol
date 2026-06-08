@@ -75,10 +75,10 @@ body {
 
 @keyframes scanline {
   0% {
-    transform: translateY(-100%);
+    top: 0%;
   }
   100% {
-    transform: translateY(100%);
+    top: 100%;
   }
 }
 
@@ -131,6 +131,20 @@ body {
   background: linear-gradient(90deg, transparent, var(--cyan), transparent);
   opacity: 0.5;
 }
+
+.hud-panel::after {
+  content: '';
+  position: absolute;
+  left: 0;
+  width: 100%;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, rgba(6, 182, 212, 0.4), transparent);
+  box-shadow: 0 0 6px rgba(6, 182, 212, 0.3);
+  animation: scanline 8s linear infinite;
+  pointer-events: none;
+  z-index: 5;
+}
+
 
 .hud-panel:hover {
   border-color: rgba(168, 85, 247, 0.3);
