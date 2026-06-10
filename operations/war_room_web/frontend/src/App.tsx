@@ -95,12 +95,19 @@ export default function App() {
   const [peersData, setPeersData] = useState<PeerListData | null>(null);
   const [auditData, setAuditData] = useState<AuditTailData | null>(null);
   const [ollamaStatus, setOllamaStatus] = useState<OllamaStatus | null>(null);
+  const [chainStatus, setChainStatus] = useState<{ height: number; validator_count: number; latest_block_time: string; guardians_count: number } | null>(null);
+  const [shipperStatus, setShipperStatus] = useState<{ enabled: boolean; endpoint_url: string; endpoint_pin_sha256: string; total_segments: number; pending_segments: number; last_push_time: string } | null>(null);
 
   // Chat & Projection States
   const [chatMessages, setChatMessages] = useState<ChatMessage[]>([]);
   const [userInput, setUserInput] = useState<string>('');
   const [isGenerating, setIsGenerating] = useState<boolean>(false);
   const [lastProjection, setLastProjection] = useState<ProjectionData | null>(null);
+  const [sanctuaryStatus, setSanctuaryStatus] = useState<{ seq: number; status: string; error?: string } | null>(null);
+  const sanctuaryStatusRef = useRef<{ seq: number; status: string; error?: string } | null>(null);
+  useEffect(() => {
+    sanctuaryStatusRef.current = sanctuaryStatus;
+  }, [sanctuaryStatus]);
 
   // Canvas Reference
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -191,6 +198,20 @@ export default function App() {
         const data = await ollamaRes.json();
         setOllamaStatus(data);
       }
+
+      // 6. Chain Status
+      const chainRes = await fetch('http://127.0.0.1:8000/api/chain');
+      if (chainRes.ok) {
+        const data = await chainRes.json();
+        setChainStatus(data);
+      }
+
+      // 7. Shipper Status
+      const shipperRes = await fetch('http://127.0.0.1:8000/api/shipper');
+      if (shipperRes.ok) {
+        const data = await shipperRes.json();
+        setShipperStatus(data);
+      }
     } catch (err) {
       console.error('Error fetching dashboard API data:', err);
     }
@@ -204,6 +225,50 @@ export default function App() {
     const intervalId = setInterval(fetchData, pollInterval);
     return () => clearInterval(intervalId);
   }, [pollInterval, paused]);
+
+  // Poll Sanctuary Transaction Status
+  useEffect(() => {
+    if (!sanctuaryStatus || sanctuaryStatus.status === 'committed' || sanctuaryStatus.status === 'failed') {
+      return;
+    }
+
+    let active = true;
+    const pollStatus = async () => {
+      try {
+        const res = await fetch(`http://127.0.0.1:8000/api/sanctuary/status?seq=${sanctuaryStatus.seq}`);
+        if (!active) return;
+        if (res.ok) {
+          const data = await res.json();
+          if (data.status === 'committed' || data.status === 'failed') {
+            setSanctuaryStatus({
+              seq: data.seq,
+              status: data.status,
+              error: data.error
+            });
+            // Auto-clear success status after 4 seconds
+            if (data.status === 'committed') {
+              setTimeout(() => {
+                setSanctuaryStatus(current => {
+                  if (current && current.seq === data.seq && current.status === 'committed') {
+                    return null;
+                  }
+                  return current;
+                });
+              }, 4000);
+            }
+          }
+        }
+      } catch (err) {
+        console.error("Error polling sanctuary status:", err);
+      }
+    };
+
+    const intervalId = setInterval(pollStatus, 800);
+    return () => {
+      active = false;
+      clearInterval(intervalId);
+    };
+  }, [sanctuaryStatus]);
 
   // Handle Chat Submission
   const handleSendMessage = async (e: React.FormEvent) => {
@@ -236,6 +301,9 @@ export default function App() {
           const y = proj.vector_3d?.[1] ?? proj.vector_2d?.[1] ?? 0;
           const z = proj.vector_3d?.[2] ?? (Math.sin(x * 3 + y * 2) * 0.4);
           targetVectorRef.current = [x, y, z];
+        }
+        if (data.sanctuary_seq) {
+          setSanctuaryStatus({ seq: data.sanctuary_seq, status: 'pending' });
         }
 
       } else {
@@ -1077,6 +1145,72 @@ export default function App() {
         drawXZRing(sweepRad, ctx.strokeStyle, false);
       }
 
+      // 11.5 Sanctuary Spooler Visualisation
+      if (sanctuaryStatusRef.current) {
+        const sStatus = sanctuaryStatusRef.current;
+        const sx = 0;
+        const sy = -0.9;
+        const sz = 0;
+        const pt = project3D(sx, sy, sz);
+        const opt = project3D(0, 0, 0);
+
+        if (isFinite(pt.x) && isFinite(pt.y) && isFinite(opt.x) && isFinite(opt.y)) {
+          // Draw sanctuary link
+          let linkColor = 'rgba(245, 158, 11, 0.1)';
+          let nodeColor = '#f59e0b';
+          if (sStatus.status === 'committed') {
+            linkColor = 'rgba(6, 182, 212, 0.25)';
+            nodeColor = '#06b6d4';
+          } else if (sStatus.status === 'failed') {
+            linkColor = 'rgba(239, 68, 68, 0.25)';
+            nodeColor = '#ef4444';
+          }
+          
+          ctx.strokeStyle = linkColor;
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.moveTo(opt.x, opt.y);
+          ctx.lineTo(pt.x, pt.y);
+          ctx.stroke();
+
+          // Draw sanctuary node (cold storage safe)
+          ctx.strokeStyle = nodeColor + '66';
+          ctx.fillStyle = 'rgba(17, 24, 39, 0.85)';
+          ctx.lineWidth = 2;
+          const size = 16 * pt.scale;
+          
+          // Draw diamond shape
+          ctx.beginPath();
+          ctx.moveTo(pt.x, pt.y - size/2);
+          ctx.lineTo(pt.x + size/2, pt.y);
+          ctx.lineTo(pt.x, pt.y + size/2);
+          ctx.lineTo(pt.x - size/2, pt.y);
+          ctx.closePath();
+          ctx.stroke();
+          ctx.fill();
+
+          // Text label
+          ctx.fillStyle = 'rgba(243, 244, 246, 0.7)';
+          ctx.font = '7px "Share Tech Mono"';
+          ctx.fillText(`SANCTUARY (TX #${sStatus.seq})`, pt.x - 30 * pt.scale, pt.y + size/2 + 8 * pt.scale);
+
+          // If pending, animate an envelope packet moving along the link
+          if (sStatus.status === 'pending') {
+            const packetProgress = (time * 0.001) % 1.0;
+            const px = sx * packetProgress;
+            const py = sy * packetProgress;
+            const pz = sz * packetProgress;
+            const pPt = project3D(px, py, pz);
+            if (isFinite(pPt.x) && isFinite(pPt.y)) {
+              ctx.fillStyle = '#f59e0b';
+              ctx.beginPath();
+              ctx.arc(pPt.x, pPt.y, 3 * pPt.scale, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+      }
+
       // 12. Draw live digital matrix overlays (top-left metadata)
       ctx.fillStyle = 'rgba(6, 182, 212, 0.4)';
       ctx.font = '8px "Share Tech Mono"';
@@ -1174,6 +1308,72 @@ export default function App() {
               <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
                 Modello: <strong className="digital-font" style={{ color: 'var(--purple)' }}>{ollamaStatus?.model_name}</strong>
               </div>
+            )}
+          </div>
+        </div>
+
+        {/* Chain Widget Section */}
+        <div className="sidebar-section">
+          <label>Consenso AppChain</label>
+          <div className="hud-panel" style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+              <span style={{
+                display: 'inline-block',
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: (chainStatus && chainStatus.height > 0) ? '#10b981' : '#ef4444',
+                boxShadow: (chainStatus && chainStatus.height > 0) ? '0 0 8px #10b981' : '0 0 8px #ef4444'
+              }}></span>
+              <span className="digital-font" style={{ fontSize: '0.8rem' }}>
+                Catena: {(chainStatus && chainStatus.height > 0) ? 'CONNESSA' : 'DISCONNESSA'}
+              </span>
+            </div>
+            {chainStatus && chainStatus.height > 0 && (
+              <>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Altezza Blocco: <strong className="digital-font" style={{ color: 'var(--cyan)' }}>{chainStatus.height}</strong>
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Validatori: <strong className="digital-font" style={{ color: 'var(--green)' }}>{chainStatus.validator_count} attivi</strong>
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  Ultimo Blocco: <strong className="digital-font" style={{ fontSize: '0.75rem', color: 'var(--text-primary)' }}>{chainStatus.latest_block_time.split('T')[1]?.split('.')[0] || chainStatus.latest_block_time}</strong>
+                </div>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Shipper Widget Section */}
+        <div className="sidebar-section">
+          <label>Santuario Shipper</label>
+          <div className="hud-panel" style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+              <span style={{
+                display: 'inline-block',
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                backgroundColor: shipperStatus?.enabled ? '#10b981' : '#6b7280',
+                boxShadow: shipperStatus?.enabled ? '0 0 8px #10b981' : 'none'
+              }}></span>
+              <span className="digital-font" style={{ fontSize: '0.8rem' }}>
+                Shipper: {shipperStatus?.enabled ? 'ATTIVO' : 'INATTIVO'}
+              </span>
+            </div>
+            {shipperStatus?.enabled && (
+              <>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Segmenti Totali: <strong className="digital-font" style={{ color: 'var(--cyan)' }}>{shipperStatus.total_segments}</strong>
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                  Pendenti Push: <strong className="digital-font" style={{ color: shipperStatus.pending_segments > 0 ? '#ffd60a' : '#10b981' }}>{shipperStatus.pending_segments}</strong>
+                </div>
+                <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                  Ultimo Invio: <strong className="digital-font" style={{ fontSize: '0.75rem', color: 'var(--text-primary)' }}>{shipperStatus.last_push_time.split('T')[1]?.split('.')[0] || shipperStatus.last_push_time}</strong>
+                </div>
+              </>
             )}
           </div>
         </div>
@@ -1294,6 +1494,24 @@ export default function App() {
                     </div>
                   )}
                 </div>
+
+                {sanctuaryStatus && (
+                  <div className="sanctuary-status-bar digital-font" style={{
+                    fontSize: '0.75rem',
+                    color: sanctuaryStatus.status === 'committed' ? '#00e5ff' : sanctuaryStatus.status === 'failed' ? '#ff3b30' : '#ffd60a',
+                    backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                    padding: '6px 10px',
+                    borderRadius: '4px',
+                    marginBottom: '8px',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    border: '1px solid ' + (sanctuaryStatus.status === 'committed' ? '#00e5ff33' : sanctuaryStatus.status === 'failed' ? '#ff3b3033' : '#ffd60a33')
+                  }}>
+                    <span>🔒 DATA SANCTUARY SPOOL (TX #{sanctuaryStatus.seq})</span>
+                    <span>STATUS: {sanctuaryStatus.status.toUpperCase()}</span>
+                  </div>
+                )}
 
                 <form className="chat-input-bar" onSubmit={handleSendMessage}>
                   <input 

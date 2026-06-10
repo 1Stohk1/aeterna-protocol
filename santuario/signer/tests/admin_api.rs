@@ -72,6 +72,9 @@ impl Harness {
             audit_log: audit_log.clone(),
             peers: PeerSnapshotReader::new(peers_path.clone()),
             sentinel_metrics: SentinelMetricsReader::new(sentinel_metrics_path.clone()),
+            signer_identity: Arc::new(santuario_ratchet::SignerIdentityKey::generate()),
+            ratchet_session: Arc::new(std::sync::Mutex::new(None)),
+            ratchet_last_handshake_utc: Arc::new(std::sync::atomic::AtomicI64::new(0)),
         };
 
         // Ephemeral port — bind first to learn the address, then hand

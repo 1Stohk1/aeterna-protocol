@@ -58,7 +58,15 @@
 pub mod config;
 pub mod error;
 pub mod segments;
+pub mod client;
+pub mod state;
+
+#[cfg(test)]
+mod mock_cert_data;
 
 pub use config::ShipperConfig;
 pub use error::{Error, Result};
 pub use segments::{find_finalized, SegmentInfo};
+pub use client::build_pinned_client;
+pub use state::Shipper;
+

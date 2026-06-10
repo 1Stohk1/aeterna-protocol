@@ -21,8 +21,10 @@ santuario-cipher    = { path = "../cipher" }
 # v0.4 Phase C: operator-endpoint ratchet (AdminService ratchet RPCs +
 # santuarioctl key/ratchet/identity subcommands).
 santuario-ratchet   = { path = "../ratchet" }
+santuario-shipper   = { path = "../shipper" }
 
 # gRPC / async
+toml         = { workspace = true }
 tonic        = { workspace = true }
 prost        = { workspace = true }
 tokio        = { workspace = true }
@@ -47,6 +49,8 @@ env_logger  = { workspace = true }
 dirs        = { workspace = true }
 chrono      = { workspace = true }
 clap        = { workspace = true }
+reqwest     = { workspace = true, features = ["json"] }
+base64      = { workspace = true }
 
 [target.'cfg(unix)'.dependencies]
 nix   = { workspace = true }

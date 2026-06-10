@@ -1,0 +1,25 @@
+{
+  "genesis_time": "2026-06-10T09:50:00Z",
+  "chain_id": "aeterna-1",
+  "initial_height": "1",
+  "app_state": {
+    "guardian": {
+      "guardians": [
+        {
+          "guardian_address": "aeterna1prometheus1address",
+          "tpm_pubkey": "dummy_tpm_pubkey_prometheus-1",
+          "manifesto_hash": "dummy_manifesto_hash_prometheus-1",
+          "registered_at_height": "1",
+          "signature": "dummy_signature_prometheus-1"
+        },
+        {
+          "guardian_address": "aeterna1prometheus2address",
+          "tpm_pubkey": "dummy_tpm_pubkey_prometheus-2",
+          "manifesto_hash": "dummy_manifesto_hash_prometheus-2",
+          "registered_at_height": "1",
+          "signature": "dummy_signature_prometheus-2"
+        }
+      ]
+    }
+  }
+}

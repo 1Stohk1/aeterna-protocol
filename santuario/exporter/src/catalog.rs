@@ -149,6 +149,17 @@ pub const CATALOG: &[CatalogEntry] = &[
         kind: MetricKind::Counter,
         help: "Inbound Sigillum gossip frames dropped due to AEAD authentication failure.",
     },
+    // --- v0.5.0 "Consensus" Phase F --------------------------------------
+    CatalogEntry {
+        key: "santuario_chain_block_height",
+        kind: MetricKind::Gauge,
+        help: "Current AppChain block height as queried from local Cosmos SDK RPC.",
+    },
+    CatalogEntry {
+        key: "santuario_shipper_segments_pushed_total",
+        kind: MetricKind::Counter,
+        help: "Total .sigillum audit-log segments successfully pushed off-host.",
+    },
 ];
 
 /// Lookup. Returns `None` for keys not in the catalog (which is the

@@ -1,0 +1,10 @@
+node:
+  moniker: "prometheus-1"
+  home_dir: "~/.aeternad_prometheus-1"
+  rpc_address: "127.0.0.1:26657"
+  rest_address: "127.0.0.1:1317"
+validator:
+  key_path: "~/.aeternad_prometheus-1/config/priv_validator_key.json"
+  sbt_address: "aeterna1prometheus1address"
+peers:
+  - "127.0.0.1:26658"

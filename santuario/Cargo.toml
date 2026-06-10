@@ -9,6 +9,7 @@ members = [
     "cipher",
     "ratchet",
     "shipper",
+    "sanctuary",
 ]
 resolver = "2"
 
@@ -75,6 +76,10 @@ walkdir      = "2"
 tonic        = "0.10"
 prost        = "0.12"
 tokio-stream = { version = "0.1", features = ["net"] }
+reqwest      = { version = "0.11", default-features = false, features = ["rustls-tls"] }
+rustls       = { version = "0.21", default-features = false, features = ["logging", "tls12", "dangerous_configuration"] }
+
+
 
 # Process/system
 nix          = { version = "0.27", features = ["process", "signal"] }

@@ -258,3 +258,10 @@ format                   = "json"
 sentinel_log             = "./logs/sentinel.jsonl"
 audit_log                = "./logs/audit.jsonl"
 rotate_mb                = 50
+[shipper]
+enabled                 = true
+endpoint_url            = "http://localhost:8000/segments"
+endpoint_pin_sha256     = "00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff"
+poll_interval_seconds   = 30
+back_off_seconds        = 60
+max_retries_per_segment = 5

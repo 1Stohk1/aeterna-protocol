@@ -589,6 +589,57 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     "santuario_log_bytes_encrypted_total",
                     audit_log.bytes_encrypted_total(),
                 );
+
+                // Phase F: SPRINT-v0.5.0 criterion #8 metrics
+                if let Ok(entries) = std::fs::read_dir(&audit_log.dir) {
+                    let pushed_count = entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| e.path().extension().and_then(|s| s.to_str()).is_some_and(|ext| ext == "pushed"))
+                        .count();
+                    metrics.set_counter("santuario_shipper_segments_pushed_total", pushed_count as u64);
+                }
+
+                // Query Cosmos block height
+                let mut height = 0.0;
+                let client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(1))
+                    .build();
+                if let Ok(client) = client {
+                    if let Ok(resp) = client.get("http://127.0.0.1:1317/status").send().await {
+                        if let Ok(json) = resp.json::<serde_json::Value>().await {
+                            if let Some(height_str) = json["result"]["sync_info"]["latest_block_height"].as_str() {
+                                if let Ok(h) = height_str.parse::<f64>() {
+                                    height = h;
+                                }
+                            }
+                        }
+                    }
+                }
+                metrics.set_gauge("santuario_chain_block_height", height);
+            }
+        });
+    }
+
+    // --- remote log shipper companion thread (Phase F) --------------------
+    let mut shipper_cfg = match std::fs::read_to_string(repo.join("aeterna.toml")) {
+        Ok(text) => santuario_shipper::config::ShipperConfig::from_aeterna_toml(&text).unwrap_or_default(),
+        Err(_) => santuario_shipper::config::ShipperConfig::default(),
+    };
+    if let Ok(endpoint_url) = std::env::var("AETERNA_SHIPPER_ENDPOINT") {
+        if !endpoint_url.trim().is_empty() {
+            shipper_cfg.endpoint_url = endpoint_url;
+            shipper_cfg.enabled = true;
+        }
+    }
+    if shipper_cfg.enabled {
+        let audit_dir = audit_log.dir.clone();
+        log::info!("Spawning remote log shipper companion thread (directory: {})...", audit_dir.display());
+        let (shutdown_tx, shutdown_rx) = tokio::sync::oneshot::channel::<()>();
+        let shipper = santuario_shipper::state::Shipper::new(shipper_cfg, audit_dir);
+        tokio::spawn(async move {
+            let _keep_alive = shutdown_tx;
+            if let Err(e) = shipper.run(shutdown_rx).await {
+                log::error!("Shipper companion thread error: {:?}", e);
             }
         });
     }
