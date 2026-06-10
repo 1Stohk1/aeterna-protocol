@@ -11,6 +11,7 @@ members = [
     "shipper",
     "sanctuary",
     "zk",
+    "sss",
 ]
 resolver = "2"
 
