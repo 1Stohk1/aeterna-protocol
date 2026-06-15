@@ -5,7 +5,7 @@ import warnings
 
 import signer_pb2 as signer__pb2
 
-GRPC_GENERATED_VERSION = '1.80.0'
+GRPC_GENERATED_VERSION = '1.81.1'
 GRPC_VERSION = grpc.__version__
 _version_not_supported = False
 
@@ -25,7 +25,7 @@ if _version_not_supported:
     )
 
 
-class SignerStub(object):
+class SignerStub:
     """v0.2.0 "Custos": the signer is no longer a bare Dilithium-5 oracle.
     Every `Sign` carries an AGP-v1 block; the signer runs the critic's
     three checks (reflexive, symbolic, axiomatic) and verifies the
@@ -70,9 +70,14 @@ class SignerStub(object):
                 request_serializer=signer__pb2.ResumeRequest.SerializeToString,
                 response_deserializer=signer__pb2.ResumeResponse.FromString,
                 _registered_method=True)
+        self.ExecuteTask = channel.unary_unary(
+                '/santuario.signer.v1.Signer/ExecuteTask',
+                request_serializer=signer__pb2.ExecuteTaskRequest.SerializeToString,
+                response_deserializer=signer__pb2.ExecuteTaskResponse.FromString,
+                _registered_method=True)
 
 
-class SignerServicer(object):
+class SignerServicer:
     """v0.2.0 "Custos": the signer is no longer a bare Dilithium-5 oracle.
     Every `Sign` carries an AGP-v1 block; the signer runs the critic's
     three checks (reflexive, symbolic, axiomatic) and verifies the
@@ -136,6 +141,13 @@ class SignerServicer(object):
         context.set_details('Method not implemented!')
         raise NotImplementedError('Method not implemented!')
 
+    def ExecuteTask(self, request, context):
+        """Execute a scientific task in a sandboxed container.
+        """
+        context.set_code(grpc.StatusCode.UNIMPLEMENTED)
+        context.set_details('Method not implemented!')
+        raise NotImplementedError('Method not implemented!')
+
 
 def add_SignerServicer_to_server(servicer, server):
     rpc_method_handlers = {
@@ -169,6 +181,11 @@ def add_SignerServicer_to_server(servicer, server):
                     request_deserializer=signer__pb2.ResumeRequest.FromString,
                     response_serializer=signer__pb2.ResumeResponse.SerializeToString,
             ),
+            'ExecuteTask': grpc.unary_unary_rpc_method_handler(
+                    servicer.ExecuteTask,
+                    request_deserializer=signer__pb2.ExecuteTaskRequest.FromString,
+                    response_serializer=signer__pb2.ExecuteTaskResponse.SerializeToString,
+            ),
     }
     generic_handler = grpc.method_handlers_generic_handler(
             'santuario.signer.v1.Signer', rpc_method_handlers)
@@ -177,7 +194,7 @@ def add_SignerServicer_to_server(servicer, server):
 
 
  # This class is part of an EXPERIMENTAL API.
-class Signer(object):
+class Signer:
     """v0.2.0 "Custos": the signer is no longer a bare Dilithium-5 oracle.
     Every `Sign` carries an AGP-v1 block; the signer runs the critic's
     three checks (reflexive, symbolic, axiomatic) and verifies the
@@ -338,6 +355,33 @@ class Signer(object):
             '/santuario.signer.v1.Signer/Resume',
             signer__pb2.ResumeRequest.SerializeToString,
             signer__pb2.ResumeResponse.FromString,
+            options,
+            channel_credentials,
+            insecure,
+            call_credentials,
+            compression,
+            wait_for_ready,
+            timeout,
+            metadata,
+            _registered_method=True)
+
+    @staticmethod
+    def ExecuteTask(request,
+            target,
+            options=(),
+            channel_credentials=None,
+            call_credentials=None,
+            insecure=False,
+            compression=None,
+            wait_for_ready=None,
+            timeout=None,
+            metadata=None):
+        return grpc.experimental.unary_unary(
+            request,
+            target,
+            '/santuario.signer.v1.Signer/ExecuteTask',
+            signer__pb2.ExecuteTaskRequest.SerializeToString,
+            signer__pb2.ExecuteTaskResponse.FromString,
             options,
             channel_credentials,
             insecure,

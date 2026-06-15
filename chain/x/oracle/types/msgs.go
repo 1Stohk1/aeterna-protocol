@@ -17,6 +17,7 @@ type MsgSubmitProof struct {
 	RefHash         string `json:"ref_hash"`
 	ObsHash         string `json:"obs_hash"`
 	Proof           []byte `json:"proof"`
+	IpfsCid         string `json:"ipfs_cid,omitempty"`
 }
 
 func NewMsgSubmitProof(
@@ -24,6 +25,7 @@ func NewMsgSubmitProof(
 	gcContentCount, hammingDistance uint32,
 	refHash, obsHash string,
 	proof []byte,
+	ipfsCid string,
 ) *MsgSubmitProof {
 	return &MsgSubmitProof{
 		Creator:         creator,
@@ -34,6 +36,7 @@ func NewMsgSubmitProof(
 		RefHash:         refHash,
 		ObsHash:         obsHash,
 		Proof:           proof,
+		IpfsCid:         ipfsCid,
 	}
 }
 

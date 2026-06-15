@@ -41,7 +41,7 @@ use santuario_signer::santuario::signer::v1::signer_server::{Signer, SignerServe
 use santuario_signer::santuario::signer::v1::{
     GetPublicKeyRequest, GetPublicKeyResponse, GetStatusRequest, GetStatusResponse, ResumeRequest,
     ResumeResponse, SignRequest, SignResponse, TriggerAuditRequest, TriggerAuditResponse,
-    VerifyRequest, VerifyResponse,
+    VerifyRequest, VerifyResponse, ExecuteTaskRequest, ExecuteTaskResponse,
 };
 
 use santuario_signer::admin::{self, AdminService};
@@ -56,7 +56,7 @@ use santuario_cipher::MasterLogKey;
 use santuario_ratchet::SignerIdentityKey;
 use santuario_critic::{parse_block, Critic, DefaultCritic, Violation};
 use santuario_integrity::{AuditLog, IntegrityAuditor, IntegrityConfig, SignerState};
-use santuario_isolation::{Launcher, PolicyKind};
+use santuario_isolation::{Launcher, PolicyKind, LaunchSpec};
 
 /// Full set of collaborators the gRPC service needs on every request.
 pub struct SantuarioSigner {
@@ -72,6 +72,8 @@ pub struct SantuarioSigner {
     /// latency here so the Admin service's `GetMetrics` has something
     /// real to show.
     metrics: Arc<MetricsRegistry>,
+    launcher: Arc<dyn Launcher + Send + Sync>,
+    repo: PathBuf,
 }
 
 impl SantuarioSigner {
@@ -133,6 +135,13 @@ impl Signer for SantuarioSigner {
     ) -> Result<Response<ResumeResponse>, Status> {
         self.resume_inner(request).await
     }
+
+    async fn execute_task(
+        &self,
+        request: Request<ExecuteTaskRequest>,
+    ) -> Result<Response<ExecuteTaskResponse>, Status> {
+        self.execute_task_inner(request).await
+    }
 }
 
 impl SantuarioSigner {
@@ -160,7 +169,7 @@ impl SantuarioSigner {
         }
 
         // Two input shapes.
-        let (payload_hash, producer_policy, producer_pid) = if !req.agp_block_json.is_empty() {
+        let (payload_hash, _producer_policy, producer_pid) = if !req.agp_block_json.is_empty() {
             // v0.2.0 path — run the full critic pipeline.
             let text = std::str::from_utf8(&req.agp_block_json)
                 .map_err(|_| Status::invalid_argument("agp_block_json is not valid UTF-8"))?;
@@ -205,7 +214,32 @@ impl SantuarioSigner {
         // Final: Dilithium-5 detached signature.
         let det = dilithium5::detached_sign(&payload_hash, &self.keystore.secret_key);
         let signature = det.as_bytes().to_vec();
-        let _ = (producer_policy, producer_pid);
+
+        // Terminate the container if producer_pid is provided and clean up the spool files
+        if let Some(pid) = producer_pid {
+            log::info!("Terminating sandbox container process with PID: {}", pid);
+            #[cfg(unix)]
+            {
+                let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGKILL);
+            }
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(&["/F", "/PID", &pid.to_string()])
+                    .spawn();
+            }
+            self.audit_log.append(&santuario_integrity::AuditRecord::WorkloadStop {
+                ts_utc: santuario_integrity::now_utc(),
+                pid,
+                status: "killed".to_string(),
+            }).ok();
+            if !req.agp_block_json.is_empty() {
+                if let Ok(block) = parse_block(std::str::from_utf8(&req.agp_block_json).unwrap_or("")) {
+                    let outbound_file = self.repo.join("santuario/vault/outbound").join(format!("{}.json", block.payload.id_task));
+                    let _ = std::fs::remove_file(&outbound_file);
+                }
+            }
+        }
 
         Ok(Response::new(SignResponse {
             signature,
@@ -330,6 +364,201 @@ impl SantuarioSigner {
             })),
         }
     }
+
+    async fn execute_task_inner(
+        &self,
+        request: Request<ExecuteTaskRequest>,
+    ) -> Result<Response<ExecuteTaskResponse>, Status> {
+        let req = request.into_inner();
+
+        // Gate 1: vault must be unsealed.
+        if self.is_vault_sealed() {
+            return Err(Status::failed_precondition(
+                "vault sealed — call vaultctl unseal before executing tasks",
+            ));
+        }
+
+        // Gate 2: signer state must be Ready.
+        let verdict = self.state.verdict();
+        if !verdict.is_ready() {
+            return Err(Status::failed_precondition(
+                verdict
+                    .as_error_reason()
+                    .unwrap_or_else(|| "signer is suspended".to_string()),
+            ));
+        }
+
+        // Parse id_task to make the spool file name unique but predictable
+        let task_val: serde_json::Value = serde_json::from_str(&req.task_json)
+            .map_err(|e| Status::invalid_argument(format!("invalid task_json: {}", e)))?;
+        let id_task = task_val["id_task"].as_str()
+            .ok_or_else(|| Status::invalid_argument("missing id_task in task_json"))?;
+
+        // 1. Resolve paths for inbound and outbound spools
+        let inbound_dir = self.repo.join("santuario/vault/inbound");
+        let outbound_dir = self.repo.join("santuario/vault/outbound");
+
+        let inbound_file = inbound_dir.join(format!("{}.json", id_task));
+        let outbound_file = outbound_dir.join(format!("{}.json", id_task));
+
+        // Ensure directories exist
+        if let Err(e) = std::fs::create_dir_all(&inbound_dir) {
+            return Ok(Response::new(ExecuteTaskResponse {
+                result_json: String::new(),
+                producer_pid: 0,
+                error: format!("Failed to create inbound spool dir: {}", e),
+            }));
+        }
+        if let Err(e) = std::fs::create_dir_all(&outbound_dir) {
+            return Ok(Response::new(ExecuteTaskResponse {
+                result_json: String::new(),
+                producer_pid: 0,
+                error: format!("Failed to create outbound spool dir: {}", e),
+            }));
+        }
+
+        // Write the task json to the inbound spool
+        if let Err(e) = std::fs::write(&inbound_file, &req.task_json) {
+            return Ok(Response::new(ExecuteTaskResponse {
+                result_json: String::new(),
+                producer_pid: 0,
+                error: format!("Failed to write inbound spool file: {}", e),
+            }));
+        }
+
+        // 2. Setup LaunchSpec for Julia running task_run.jl
+        let julia_bin = find_executable("julia").unwrap_or_else(|| PathBuf::from("julia"));
+        let spec = LaunchSpec::new(julia_bin, PolicyKind::Julia)
+            .with_arg("scientific/task_run.jl")
+            .with_arg(inbound_file.to_string_lossy().to_string())
+            .with_arg(outbound_file.to_string_lossy().to_string());
+
+        log::info!("Executing task in sandbox: {:?}", spec);
+
+        // 3. Launch using isolation launcher
+        let mut child_handle = None;
+        let pid = match self.launcher.launch(&spec) {
+            Ok(c) => c.attestation.pid,
+            Err(e) => {
+                if self.launcher.is_enforcing() {
+                    let _ = std::fs::remove_file(&inbound_file);
+                    return Err(Status::internal(format!("Failed to launch task container under isolation: {}", e)));
+                } else {
+                    log::warn!("Workload isolation launcher failed on non-enforcing platform: {}. Falling back to host-space execution.", e);
+                    let mut cmd = std::process::Command::new(&spec.program);
+                    cmd.args(&spec.args);
+                    if let Some(workdir) = &spec.workdir {
+                        cmd.current_dir(workdir);
+                    }
+                    for (k, v) in &spec.env {
+                        cmd.env(k, v);
+                    }
+                    match cmd.spawn() {
+                        Ok(c) => {
+                            let spawned_pid = c.id() as i32;
+                            child_handle = Some(c);
+                            spawned_pid
+                        }
+                        Err(spawn_err) => {
+                            let _ = std::fs::remove_file(&inbound_file);
+                            return Ok(Response::new(ExecuteTaskResponse {
+                                result_json: String::new(),
+                                producer_pid: 0,
+                                error: format!("Host-space fallback spawn failed: {}", spawn_err),
+                            }));
+                        }
+                    }
+                }
+            }
+        };
+
+        log::info!("Sandbox/Host process running with PID: {}", pid);
+
+        self.audit_log.append(&santuario_integrity::AuditRecord::WorkloadStart {
+            ts_utc: santuario_integrity::now_utc(),
+            pid,
+            policy: spec.policy.name().to_string(),
+        }).ok();
+
+        // 4. Poll for the output file to be written. Wait up to 30 seconds.
+        let mut attempts = 0;
+        let mut result_json = String::new();
+        let mut err_msg = String::new();
+
+        loop {
+            if attempts >= 60 {
+                err_msg = "Timeout waiting for task execution".to_string();
+                break;
+            }
+            if outbound_file.exists() {
+                match std::fs::read_to_string(&outbound_file) {
+                    Ok(s) => {
+                        result_json = s;
+                        break;
+                    }
+                    Err(_e) => {
+                        // Might be mid-write, wait a tiny bit
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        attempts += 1;
+                        continue;
+                    }
+                }
+            }
+            if let Some(ref mut child) = child_handle {
+                if let Ok(Some(exit_status)) = child.try_wait() {
+                    if !outbound_file.exists() {
+                        err_msg = format!("Host process exited unexpectedly with status: {}", exit_status);
+                        break;
+                    }
+                }
+            } else {
+                // Check if process has died prematurely (only on unix/linux where /proc exists)
+                #[cfg(unix)]
+                {
+                    if !Path::new(&format!("/proc/{}", pid)).exists() {
+                        err_msg = "Sandbox container exited unexpectedly".to_string();
+                        break;
+                    }
+                }
+            }
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            attempts += 1;
+        }
+
+        // Clean up input spool file
+        let _ = std::fs::remove_file(&inbound_file);
+
+        if !err_msg.is_empty() {
+            // Kill the container or process if it's still running
+            #[cfg(unix)]
+            {
+                let _ = nix::sys::signal::kill(nix::unistd::Pid::from_raw(pid), nix::sys::signal::Signal::SIGKILL);
+            }
+            #[cfg(windows)]
+            {
+                let _ = std::process::Command::new("taskkill")
+                    .args(&["/F", "/PID", &pid.to_string()])
+                    .spawn();
+            }
+            self.audit_log.append(&santuario_integrity::AuditRecord::WorkloadStop {
+                ts_utc: santuario_integrity::now_utc(),
+                pid,
+                status: format!("error: {}", err_msg),
+            }).ok();
+            let _ = std::fs::remove_file(&outbound_file);
+            return Ok(Response::new(ExecuteTaskResponse {
+                result_json: String::new(),
+                producer_pid: 0,
+                error: err_msg,
+            }));
+        }
+
+        Ok(Response::new(ExecuteTaskResponse {
+            result_json,
+            producer_pid: pid,
+            error: String::new(),
+        }))
+    }
 }
 
 // --- helpers ---------------------------------------------------------------
@@ -410,6 +639,26 @@ fn repo_root() -> PathBuf {
             let manifest = env!("CARGO_MANIFEST_DIR");
             PathBuf::from(manifest).join("..").join("..")
         })
+}
+
+
+
+fn find_executable(name: &str) -> Option<PathBuf> {
+    if let Ok(path) = std::env::var("PATH") {
+        for dir in std::env::split_paths(&path) {
+            let exe_path = dir.join(name);
+            #[cfg(windows)]
+            let exe_path = if exe_path.extension().is_none() {
+                exe_path.with_extension("exe")
+            } else {
+                exe_path
+            };
+            if exe_path.exists() {
+                return Some(exe_path);
+            }
+        }
+    }
+    None
 }
 
 fn load_integrity_config(repo: &Path) -> IntegrityConfig {
@@ -654,6 +903,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         recovery: recovery_ctx,
         vault_sealed,
         metrics: metrics.clone(),
+        launcher: launcher.clone(),
+        repo: repo.clone(),
     };
 
     // v0.4 Phase C: signer's long-term X25519 identity for the

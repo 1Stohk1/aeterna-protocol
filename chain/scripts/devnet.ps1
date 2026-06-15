@@ -31,12 +31,15 @@ Write-Host "Injecting pre-minted SBT genesis configuration..."
 Copy-Item (Join-Path $PSScriptRoot "genesis.json") (Join-Path $Home1 "config\genesis.json") -Force
 Copy-Item (Join-Path $PSScriptRoot "genesis.json") (Join-Path $Home2 "config\genesis.json") -Force
 
-# Start nodes in background with redirected output logs and --home flag
+# Start nodes in background with cmd start /b (persists after script exits)
 Write-Host "Starting Node 1 on RPC :26657, REST :1317..."
-Start-Process -FilePath $BinaryPath -ArgumentList "start --rpc-addr 127.0.0.1:26657 --rest-addr 127.0.0.1:1317 --moniker prometheus-1 --home $Home1" -WindowStyle Hidden -RedirectStandardOutput (Join-Path $Home1 "aeternad.log") -RedirectStandardError (Join-Path $Home1 "aeternad_err.log")
+$Cmd1 = "start /b `"`" `"$BinaryPath`" start --rpc-addr 127.0.0.1:26657 --rest-addr 127.0.0.1:1317 --moniker prometheus-1 --home `"$Home1`" > `"$Home1\aeternad.log`" 2>&1"
+& cmd.exe /c $Cmd1
 
 Write-Host "Starting Node 2 on RPC :26658, REST :1318..."
-Start-Process -FilePath $BinaryPath -ArgumentList "start --rpc-addr 127.0.0.1:26658 --rest-addr 127.0.0.1:1318 --moniker prometheus-2 --home $Home2" -WindowStyle Hidden -RedirectStandardOutput (Join-Path $Home2 "aeternad.log") -RedirectStandardError (Join-Path $Home2 "aeternad_err.log")
+$Cmd2 = "start /b `"`" `"$BinaryPath`" start --rpc-addr 127.0.0.1:26658 --rest-addr 127.0.0.1:1318 --moniker prometheus-2 --home `"$Home2`" > `"$Home2\aeternad.log`" 2>&1"
+& cmd.exe /c $Cmd2
+
 
 Write-Host "Local 2-node devnet launched successfully:"
 Write-Host "  - Node 1 (prometheus-1): http://127.0.0.1:1317 (REST) / http://127.0.0.1:26657 (RPC) with home $Home1"

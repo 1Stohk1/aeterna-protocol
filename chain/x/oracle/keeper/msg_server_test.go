@@ -52,6 +52,7 @@ func TestMsgSubmitProof(t *testing.T) {
 		"ref-hash-xyz",
 		"obs-hash-123",
 		validProof,
+		"QmMockedIpfsCidForTest",
 	)
 
 	// 1. Submit valid proof
@@ -65,6 +66,7 @@ func TestMsgSubmitProof(t *testing.T) {
 	require.Equal(t, creator, proof.Creator)
 	require.Equal(t, "manifest-hash-abc", proof.ManifestHash)
 	require.True(t, proof.Verified)
+	require.Equal(t, "QmMockedIpfsCidForTest", proof.IpfsCid)
 
 	// 3. Verify trust score is updated in trustscore module (1/1 successful task = 100%)
 	ts, found := tk.GetTrustScore(ctx, creator)
@@ -88,6 +90,7 @@ func TestMsgSubmitProof(t *testing.T) {
 		"ref-hash-xyz",
 		"obs-hash-123",
 		invalidProof,
+		"",
 	)
 	_, err = srv.SubmitProof(sdk.WrapSDKContext(ctx), msgInvalidSize)
 	require.Error(t, err)

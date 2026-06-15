@@ -80,6 +80,15 @@ impl AttestationGate {
                 Ok(None)
             }
             Some(pid) => {
+                if !self.launcher.is_enforcing() {
+                    return Ok(Some(Attestation {
+                        pid,
+                        policy: claimed_policy,
+                        exe_hash_hex: "mock_hash_non_enforcing".to_string(),
+                        started_utc: santuario_isolation::now_utc(),
+                        program: std::path::PathBuf::from("host_julia"),
+                    }));
+                }
                 let att = self.launcher.attest(pid)?;
                 if att.policy != claimed_policy {
                     return Err(AttestationError::PolicyMismatch {

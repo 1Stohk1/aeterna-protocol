@@ -134,29 +134,43 @@ def get_shipper_status():
     }
 
 def get_chain_status():
-    block_height = get_block_height()
-    guardians = get_registered_guardians()
-    
+    nodes = ["http://127.0.0.1:1317", "http://127.0.0.1:1318"]
+    block_height = 0
+    guardians = []
     validator_count = 0
     latest_block_time = "—"
+    active_url = None
+
+    for url in nodes:
+        h = get_block_height(url)
+        if h > 0:
+            block_height = h
+            active_url = url
+            break
+
+    if not active_url:
+        active_url = nodes[0]
+
+    guardians = get_registered_guardians(active_url)
+
     try:
-        val_res = fetch_json("http://127.0.0.1:1317/cosmos/staking/v1beta1/validators")
+        val_res = fetch_json(f"{active_url}/cosmos/staking/v1beta1/validators")
         if val_res and "validators" in val_res:
             validator_count = len([v for v in val_res["validators"] if v.get("status") == "BOND_STATUS_BONDED"])
     except Exception:
         pass
-        
+
     if validator_count == 0:
         if block_height > 0:
             validator_count = 2
-            
+
     try:
-        status_res = fetch_json("http://127.0.0.1:1317/status")
+        status_res = fetch_json(f"{active_url}/status")
         if status_res and "result" in status_res and "sync_info" in status_res["result"]:
             latest_block_time = status_res["result"]["sync_info"].get("latest_block_time", "—")
     except Exception:
         pass
-        
+
     return {
         "height": block_height,
         "validator_count": validator_count,
@@ -165,15 +179,25 @@ def get_chain_status():
     }
 
 def get_trust_score(address, rest_url="http://127.0.0.1:1317", contract="aeterna_oracle_contract"):
+    # Try native trust score endpoint first (scale by 1,000,000)
+    url = f"{rest_url}/aeterna/trustscore/v1/score/{address}"
+    res = fetch_json(url)
+    if res and "trust_score" in res and "score" in res["trust_score"]:
+        try:
+            return float(res["trust_score"]["score"]) / 1000000.0
+        except (ValueError, TypeError, KeyError):
+            pass
+
+    # Fallback to CosmWasm smart query
     query_json = {"get_trust_score": {"address": address}}
     query_bytes = json.dumps(query_json).encode("utf-8")
     query_b64 = base64.b64encode(query_bytes).decode("utf-8")
-    url = f"{rest_url}/cosmwasm/wasm/v1/contract/{contract}/smart/{query_b64}"
-    res = fetch_json(url)
-    if res and "data" in res and "score" in res["data"]:
+    url_cw = f"{rest_url}/cosmwasm/wasm/v1/contract/{contract}/smart/{query_b64}"
+    res_cw = fetch_json(url_cw)
+    if res_cw and "data" in res_cw and "score" in res_cw["data"]:
         try:
-            return float(res["data"]["score"])
-        except ValueError:
+            return float(res_cw["data"]["score"])
+        except (ValueError, TypeError):
             pass
     return 0.50  # fallback initial score
 
@@ -282,7 +306,7 @@ def serialize_metrics(m):
     for g in guardians:
         addr = g["guardian_address"]
         score = get_trust_score(addr)
-        short_addr = addr[:12] + "..." if len(addr) > 15 else addr
+        short_addr = addr[:19] + "..." if len(addr) > 22 else addr
         gauges[f"aeterna_oracle_trust_score_{short_addr}"] = score
 
     return {
@@ -401,7 +425,7 @@ class ApiHandler(BaseHTTPRequestHandler):
                 for g in guardians:
                     addr = g["guardian_address"]
                     score = get_trust_score(addr)
-                    short_addr = addr[:12] + "..." if len(addr) > 15 else addr
+                    short_addr = addr[:19] + "..." if len(addr) > 22 else addr
                     gauges[f"aeterna_oracle_trust_score_{short_addr}"] = score
                 
                 self._write_json(200, {
@@ -421,10 +445,8 @@ class ApiHandler(BaseHTTPRequestHandler):
             self._write_json(200, serialize_peers_enriched(peers_r))
 
         elif self.path.startswith("/api/audit"):
-            # Default tail limit is 20
             limit = 20
             try:
-                # Parse query limit if present
                 if "?" in self.path:
                     parts = self.path.split("?")
                     for param in parts[1].split("&"):
@@ -432,12 +454,58 @@ class ApiHandler(BaseHTTPRequestHandler):
                             limit = int(param.split("=")[1])
             except Exception:
                 pass
-            
-            audit_r = obs.tail_audit_log(limit=limit)
-            if isinstance(audit_r, Unreachable):
-                self._write_json(503, {"reason": audit_r.reason})
-            else:
-                self._write_json(200, serialize_audit(audit_r))
+
+            signer_lines = []
+            try:
+                audit_r = obs.tail_audit_log(limit=limit)
+                if not isinstance(audit_r, Unreachable) and hasattr(audit_r, "lines"):
+                    for l in audit_r.lines:
+                        signer_lines.append({
+                            "ts_utc": l.ts_utc,
+                            "record": l.record,
+                            "json": l.json
+                        })
+            except Exception:
+                pass
+
+            blockchain_lines = []
+            try:
+                nodes = ["http://127.0.0.1:1317", "http://127.0.0.1:1318"]
+                seen_tasks = set()
+                for base_url in nodes:
+                    proof_res = fetch_json(f"{base_url}/aeterna/oracle/v1/proof")
+                    if proof_res and "proofs" in proof_res:
+                        for p in proof_res["proofs"]:
+                            task_id = p.get("task_id")
+                            if not task_id or task_id in seen_tasks:
+                                continue
+                            seen_tasks.add(task_id)
+
+                            height = p.get("height", 0)
+                            creator = p.get("creator", "")
+                            gc = p.get("gc_content_count", 0)
+                            hamming = p.get("hamming_distance", 0)
+
+                            # Estimate ts_utc from height (e.g. roughly current time minus height diff)
+                            ts_utc = int(time.time())
+                            ipfs_cid = p.get("ipfs_cid", "")
+                            if ipfs_cid:
+                                record = f"[ORACLE] Height {height} | Task {task_id} verified by {creator[:12]}... (GC={gc}, Hamming={hamming}) | IPFS: {ipfs_cid}"
+                            else:
+                                record = f"[ORACLE] Height {height} | Task {task_id} verified by {creator[:12]}... (GC={gc}, Hamming={hamming})"
+                            blockchain_lines.append({
+                                "ts_utc": ts_utc,
+                                "record": record,
+                                "json": json.dumps(p)
+                            })
+            except Exception:
+                pass
+
+            merged_lines = signer_lines + blockchain_lines
+            merged_lines.sort(key=lambda x: x.get("ts_utc", 0), reverse=True)
+            merged_lines = merged_lines[:limit]
+
+            self._write_json(200, {"lines": merged_lines})
 
         elif self.path == "/api/ollama/status":
             healthy = client.is_healthy()

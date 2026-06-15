@@ -319,6 +319,8 @@ fn record_metadata(rec: &AuditRecord) -> (i64, String) {
         AuditRecord::SignerSuspend { ts_utc, .. } => (*ts_utc, "signer_suspend".to_string()),
         AuditRecord::SignerResume { ts_utc, .. } => (*ts_utc, "signer_resume".to_string()),
         AuditRecord::BaselineSealed { ts_utc, .. } => (*ts_utc, "baseline_sealed".to_string()),
+        AuditRecord::WorkloadStart { ts_utc, .. } => (*ts_utc, "workload_start".to_string()),
+        AuditRecord::WorkloadStop { ts_utc, .. } => (*ts_utc, "workload_stop".to_string()),
     }
 }
 

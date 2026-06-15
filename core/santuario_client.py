@@ -94,16 +94,40 @@ class SantuarioClient:
             method = getattr(self._stub, method_name)
             return method(request, timeout=self._rpc_timeout_seconds)
 
-    def sign(self, payload_hash: bytes) -> bytes:
+    def sign(
+        self,
+        payload_hash: bytes,
+        agp_block_json: bytes | None = None,
+        producer_pid: int | None = None,
+        producer_policy: str | None = None,
+    ) -> bytes:
         if len(payload_hash) != 32:
             raise ValueError("payload_hash must be exactly 32 bytes")
 
         req = signer_pb2.SignRequest(payload_hash=payload_hash)
+        if agp_block_json is not None:
+            req.agp_block_json = agp_block_json
+        if producer_pid is not None:
+            req.producer_pid = producer_pid
+        if producer_policy is not None:
+            req.producer_policy = producer_policy
+
         try:
             resp = self._call("Sign", req)
             return resp.signature
         except grpc.RpcError as exc:
             LOG.error("Santuario sign failed: %s", exc)
+            raise
+
+    def execute_task(self, task_json: str, policy: str) -> tuple[str, int]:
+        req = signer_pb2.ExecuteTaskRequest(task_json=task_json, policy=policy)
+        try:
+            resp = self._call("ExecuteTask", req)
+            if resp.error:
+                raise RuntimeError(f"Santuario ExecuteTask error: {resp.error}")
+            return resp.result_json, resp.producer_pid
+        except grpc.RpcError as exc:
+            LOG.error("Santuario ExecuteTask RPC failed: %s", exc)
             raise
 
     def verify(self, payload_hash: bytes, signature: bytes, public_key: bytes) -> bool:

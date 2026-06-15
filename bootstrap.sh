@@ -177,52 +177,90 @@ check_files
 check_python
 check_julia
 
-info "launching julia scientific engine → $JULIA_LOG"
-julia --project=scientific scientific/zmq_server.jl >"$JULIA_LOG" 2>&1 &
-JULIA_PID=$!
-info "  julia pid=$JULIA_PID"
+is_gvisor=0
+if grep -q 'isolation_mode[[:space:]]*=[[:space:]]*"gvisor"' aeterna.toml; then
+  is_gvisor=1
+fi
 
 # Force WSL to use TCP because of tonic/grpcio HTTP/2 UDS bugs
 if [[ "$(uname -s)" =~ ^(MINGW|MSYS|CYGWIN) ]] || [[ "$(uname -r)" =~ WSL ]]; then
   export SANTUARIO_PORT="50051"
 fi
 
-info "launching santuario signer (Dilithium-5) → $SANTUARIO_LOG"
-# Attempt to run it via cargo. In a production environment without cargo, this would just be `./santuario-signer`.
-if command -v cargo >/dev/null 2>&1; then
-  (cd santuario/signer && cargo run --bin santuario-signer > "$SANTUARIO_LOG" 2>&1) &
-  SANTUARIO_PID=$!
-  info "  santuario pid=$SANTUARIO_PID"
-else
-  warn "cargo not found, skipping Santuario signer startup (Python sentinel may fail if it cannot connect to gRPC)"
-fi
-
-if [[ -n "$SANTUARIO_PID" ]]; then
-  if [[ -n "${SANTUARIO_PORT:-}" ]]; then
-    info "waiting for Santuario TCP :$SANTUARIO_PORT (timeout 60s)..."
-    if ! wait_for_port "$SANTUARIO_PORT" 60 "$SANTUARIO_PID"; then
-      warn "santuario did not bind within 60s - last 40 lines of its log:"
-      tail -n 40 "$SANTUARIO_LOG" || true
-      die "aborting"
-    fi
+if [[ $is_gvisor -eq 1 ]]; then
+  info "isolation_mode=gvisor detected: Julia lifecycle delegated to the Santuario Signer."
+  
+  info "launching santuario signer (Dilithium-5) → $SANTUARIO_LOG"
+  # Attempt to run it via cargo. In a production environment without cargo, this would just be `./santuario-signer`.
+  if command -v cargo >/dev/null 2>&1; then
+    (cd santuario/signer && cargo run --bin santuario-signer > "$SANTUARIO_LOG" 2>&1) &
+    SANTUARIO_PID=$!
+    info "  santuario pid=$SANTUARIO_PID"
   else
-    info "waiting for Santuario UDS $SANTUARIO_SOCKET (timeout 60s)..."
-    if ! wait_for_socket "$SANTUARIO_SOCKET" 60 "$SANTUARIO_PID"; then
-      warn "santuario did not bind within 60s - last 40 lines of its log:"
-      tail -n 40 "$SANTUARIO_LOG" || true
-      die "aborting"
-    fi
+    warn "cargo not found, skipping Santuario signer startup (Python sentinel may fail if it cannot connect to gRPC)"
   fi
-  info "santuario signer ready"
-fi
 
-info "waiting for ZMQ REP to bind on :5555 (timeout 60s)…"
-if ! wait_for_port 5555 60; then
-  warn "julia did not bind within 60s — last 40 lines of its log:"
-  tail -n 40 "$JULIA_LOG" || true
-  die "aborting"
+  if [[ -n "$SANTUARIO_PID" ]]; then
+    if [[ -n "${SANTUARIO_PORT:-}" ]]; then
+      info "waiting for Santuario TCP :$SANTUARIO_PORT (timeout 60s)..."
+      if ! wait_for_port "$SANTUARIO_PORT" 60 "$SANTUARIO_PID"; then
+        warn "santuario did not bind within 60s - last 40 lines of its log:"
+        tail -n 40 "$SANTUARIO_LOG" || true
+        die "aborting"
+      fi
+    else
+      info "waiting for Santuario UDS $SANTUARIO_SOCKET (timeout 60s)..."
+      if ! wait_for_socket "$SANTUARIO_SOCKET" 60 "$SANTUARIO_PID"; then
+        warn "santuario did not bind within 60s - last 40 lines of its log:"
+        tail -n 40 "$SANTUARIO_LOG" || true
+        die "aborting"
+      fi
+    fi
+    info "santuario signer ready"
+  fi
+else
+  info "launching julia scientific engine → $JULIA_LOG"
+  julia --project=scientific scientific/zmq_server.jl >"$JULIA_LOG" 2>&1 &
+  JULIA_PID=$!
+  info "  julia pid=$JULIA_PID"
+
+  info "launching santuario signer (Dilithium-5) → $SANTUARIO_LOG"
+  # Attempt to run it via cargo. In a production environment without cargo, this would just be `./santuario-signer`.
+  if command -v cargo >/dev/null 2>&1; then
+    (cd santuario/signer && cargo run --bin santuario-signer > "$SANTUARIO_LOG" 2>&1) &
+    SANTUARIO_PID=$!
+    info "  santuario pid=$SANTUARIO_PID"
+  else
+    warn "cargo not found, skipping Santuario signer startup (Python sentinel may fail if it cannot connect to gRPC)"
+  fi
+
+  if [[ -n "$SANTUARIO_PID" ]]; then
+    if [[ -n "${SANTUARIO_PORT:-}" ]]; then
+      info "waiting for Santuario TCP :$SANTUARIO_PORT (timeout 60s)..."
+      if ! wait_for_port "$SANTUARIO_PORT" 60 "$SANTUARIO_PID"; then
+        warn "santuario did not bind within 60s - last 40 lines of its log:"
+        tail -n 40 "$SANTUARIO_LOG" || true
+        die "aborting"
+      fi
+    else
+      info "waiting for Santuario UDS $SANTUARIO_SOCKET (timeout 60s)..."
+      if ! wait_for_socket "$SANTUARIO_SOCKET" 60 "$SANTUARIO_PID"; then
+        warn "santuario did not bind within 60s - last 40 lines of its log:"
+        tail -n 40 "$SANTUARIO_LOG" || true
+        die "aborting"
+      fi
+    fi
+    info "santuario signer ready"
+  fi
+
+  info "waiting for ZMQ REP to bind on :5555 (timeout 60s)…"
+  if ! wait_for_port 5555 60; then
+    warn "julia did not bind within 60s — last 40 lines of its log:"
+    tail -n 40 "$JULIA_LOG" || true
+    die "aborting"
+  fi
+  info "julia engine ready"
 fi
-info "julia engine ready"
 
 info "launching python sentinel — Ctrl-C stops the whole node"
 info "  sentinel log → $SENTINEL_LOG"

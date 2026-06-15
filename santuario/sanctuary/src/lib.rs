@@ -1,5 +1,7 @@
 pub mod spool;
 pub mod vector;
+pub mod file;
+pub mod ipfs;
 
 use serde::{Deserialize, Serialize};
 use thiserror::Error;

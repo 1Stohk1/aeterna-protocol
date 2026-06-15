@@ -1,70 +1,102 @@
-use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::fs;
 use std::path::PathBuf;
 use std::thread;
 use std::time::Duration;
+use serde::Deserialize;
 
 use santuario_sanctuary::spool::SpoolProcessor;
 use santuario_sanctuary::MockVault;
-use santuario_sanctuary::{SanctuaryError, SanctuaryRecord, SecureStorage};
+use santuario_sanctuary::{SecureStorage, SanctuaryRecord, SanctuaryError};
+use santuario_sanctuary::file::FileSecureStorage;
+use santuario_sanctuary::ipfs::IpfsSecureStorage;
 
-/// File-backed append-only cold storage for the sanctuary.
-pub struct FileSecureStorage {
-    file_path: PathBuf,
+#[derive(Debug, Deserialize)]
+struct VaultConfig {
+    #[serde(default = "default_storage_mode")]
+    storage_mode: String,
 }
 
-impl FileSecureStorage {
-    pub fn new(path: PathBuf) -> Self {
-        Self { file_path: path }
-    }
+fn default_storage_mode() -> String {
+    "local_encrypted".to_string()
 }
 
-impl SecureStorage for FileSecureStorage {
+#[derive(Debug, Deserialize)]
+struct AeternaConfig {
+    #[serde(default)]
+    vault: Option<VaultConfig>,
+}
+
+enum StorageType {
+    File(FileSecureStorage),
+    Ipfs(IpfsSecureStorage),
+}
+
+impl SecureStorage for StorageType {
     fn append(&mut self, record: SanctuaryRecord) -> Result<(), SanctuaryError> {
-        let mut file = OpenOptions::new()
-            .create(true)
-            .append(true)
-            .open(&self.file_path)?;
-        
-        let json_line = serde_json::to_string(&record)?;
-        writeln!(file, "{}", json_line)?;
-        Ok(())
+        match self {
+            StorageType::File(s) => s.append(record),
+            StorageType::Ipfs(s) => s.append(record),
+        }
     }
 
     fn read_all(&self) -> Result<Vec<SanctuaryRecord>, SanctuaryError> {
-        if !self.file_path.exists() {
-            return Ok(Vec::new());
+        match self {
+            StorageType::File(s) => s.read_all(),
+            StorageType::Ipfs(s) => s.read_all(),
         }
-        let content = fs::read_to_string(&self.file_path)?;
-        let mut records = Vec::new();
-        for line in content.lines() {
-            if !line.trim().is_empty() {
-                let rec: SanctuaryRecord = serde_json::from_str(line)?;
-                records.push(rec);
+    }
+}
+
+fn load_config() -> AeternaConfig {
+    let config_path = PathBuf::from("aeterna.toml");
+    if config_path.exists() {
+        if let Ok(content) = fs::read_to_string(&config_path) {
+            if let Ok(config) = toml::from_str::<AeternaConfig>(&content) {
+                return config;
             }
         }
-        Ok(records)
     }
+    AeternaConfig { vault: None }
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    log::info!("Starting AETERNA Data Sanctuary Daemon (Phase H)...");
+    log::info!("Starting AETERNA Data Sanctuary Daemon (Milestone v1.0.0 Sovereign)...");
+
+    let config = load_config();
+    let storage_mode = config
+        .vault
+        .map(|v| v.storage_mode)
+        .unwrap_or_else(default_storage_mode);
+    log::info!("Configured storage mode: {}", storage_mode);
 
     // Initialize paths
     let vault_dir = PathBuf::from("santuario/vault");
     let inbound_dir = vault_dir.join("inbound");
     let outbound_dir = vault_dir.join("outbound");
     let cold_storage_path = vault_dir.join("cold_storage.jsonl");
+    let ipfs_index_path = vault_dir.join("ipfs_index.jsonl");
 
     log::info!("  Inbound spool : {:?}", inbound_dir);
     log::info!("  Outbound spool: {:?}", outbound_dir);
     log::info!("  Cold storage  : {:?}", cold_storage_path);
 
+    // Initialize storage based on mode
+    let mut storage = if storage_mode == "ipfs" {
+        log::info!("  IPFS Index    : {:?}", ipfs_index_path);
+        StorageType::Ipfs(IpfsSecureStorage::new(
+            "http://127.0.0.1:5001".to_string(),
+            "http://127.0.0.1:8080".to_string(),
+            ipfs_index_path,
+            cold_storage_path,
+        ))
+    } else {
+        StorageType::File(FileSecureStorage::new(cold_storage_path))
+    };
+
     // Initialize components
     let vault = MockVault;
-    let mut storage = FileSecureStorage::new(cold_storage_path);
     let processor = SpoolProcessor::new(inbound_dir, outbound_dir);
 
     // Initial setup

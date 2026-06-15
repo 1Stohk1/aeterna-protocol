@@ -12,4 +12,5 @@ type TaskProof struct {
 	Proof           []byte `json:"proof"`
 	Verified        bool   `json:"verified"`
 	Height          int64  `json:"height"`
+	IpfsCid         string `json:"ipfs_cid,omitempty"`
 }

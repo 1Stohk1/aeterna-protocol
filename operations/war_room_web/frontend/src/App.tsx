@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import './App.css';
 
 // TypeScript Interfaces
@@ -108,6 +108,78 @@ export default function App() {
   useEffect(() => {
     sanctuaryStatusRef.current = sanctuaryStatus;
   }, [sanctuaryStatus]);
+
+  // Derive running workloads from audit logs
+  const runningWorkloads = useMemo(() => {
+    if (!auditData?.lines) return [];
+    const active = new Map<number, { pid: number; policy: string; startedAt: number }>();
+    const sortedLines = [...auditData.lines].reverse();
+    for (const line of sortedLines) {
+      let recordObj: any = {};
+      try {
+        recordObj = JSON.parse(line.json);
+      } catch (e) {
+        continue;
+      }
+      if (line.record === 'workload_start') {
+        active.set(recordObj.pid, {
+          pid: recordObj.pid,
+          policy: recordObj.policy,
+          startedAt: line.ts_utc
+        });
+      } else if (line.record === 'workload_stop') {
+        active.delete(recordObj.pid);
+      }
+    }
+    return Array.from(active.values());
+  }, [auditData]);
+
+  // Derive a history of recent workloads (e.g. last 5)
+  const recentWorkloads = useMemo(() => {
+    if (!auditData?.lines) return [];
+    const workloads: { pid: number; policy: string; ts: number; status: 'running' | 'success' | 'failed'; error?: string }[] = [];
+    const starts = auditData.lines.filter(l => l.record === 'workload_start');
+    const stops = auditData.lines.filter(l => l.record === 'workload_stop');
+    
+    for (const startLine of starts) {
+      let startObj: any = {};
+      try { startObj = JSON.parse(startLine.json); } catch (e) { continue; }
+      
+      const matchingStop = stops.find(s => {
+        try {
+          const stopObj = JSON.parse(s.json);
+          return stopObj.pid === startObj.pid;
+        } catch (e) {
+          return false;
+        }
+      });
+      
+      let status: 'running' | 'success' | 'failed' = 'running';
+      let error = '';
+      if (matchingStop) {
+        try {
+          const stopObj = JSON.parse(matchingStop.json);
+          if (stopObj.status === 'success' || stopObj.status === 'killed') {
+            status = 'success';
+          } else {
+            status = 'failed';
+            error = stopObj.status;
+          }
+        } catch (e) {}
+      }
+      
+      workloads.push({
+        pid: startObj.pid,
+        policy: startObj.policy,
+        ts: startLine.ts_utc,
+        status,
+        error
+      });
+    }
+    
+    workloads.sort((a, b) => b.ts - a.ts);
+    return workloads.slice(0, 5);
+  }, [auditData]);
 
   // Canvas Reference
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -1246,6 +1318,16 @@ export default function App() {
 
   return (
     <div className="app-container">
+      <style>{`
+        @keyframes flashPulse {
+          0% { background-color: rgba(16, 185, 129, 0.03); }
+          50% { background-color: rgba(16, 185, 129, 0.15); }
+          100% { background-color: rgba(16, 185, 129, 0.03); }
+        }
+        .workload-item.running {
+          animation: flashPulse 1.5s infinite ease-in-out;
+        }
+      `}</style>
       {/* Sidebar Control Panel */}
       <aside className="sidebar">
         <div className="logo-container">
@@ -1375,6 +1457,67 @@ export default function App() {
                 </div>
               </>
             )}
+          </div>
+        </div>
+
+        {/* Workload Monitor Widget Section */}
+        <div className="sidebar-section">
+          <label>Stato Workload Sandbox</label>
+          <div className="hud-panel" style={{ padding: '0.8rem', display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span className="digital-font" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                Attivi: <strong style={{ color: runningWorkloads.length > 0 ? '#10b981' : 'var(--text-secondary)' }}>{runningWorkloads.length}</strong>
+              </span>
+              {runningWorkloads.length > 0 && (
+                <span className="pulse" style={{
+                  display: 'inline-block',
+                  width: '8px',
+                  height: '8px',
+                  borderRadius: '50%',
+                  backgroundColor: '#10b981',
+                  boxShadow: '0 0 8px #10b981'
+                }}></span>
+              )}
+            </div>
+            
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem', maxHeight: '150px', overflowY: 'auto' }}>
+              {recentWorkloads.length === 0 ? (
+                <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '0.5rem 0' }}>
+                  Nessun workload recente
+                </div>
+              ) : (
+                recentWorkloads.map((wl, i) => (
+                  <div key={i} className={`workload-item ${wl.status}`} style={{
+                    display: 'flex',
+                    flexDirection: 'column',
+                    padding: '0.4rem',
+                    borderRadius: '4px',
+                    backgroundColor: 'rgba(255,255,255,0.03)',
+                    borderLeft: `3px solid ${wl.status === 'running' ? '#10b981' : (wl.status === 'success' ? '#3b82f6' : '#ef4444')}`
+                  }}>
+                    <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.75rem' }}>
+                      <span className="digital-font" style={{ fontWeight: 'bold', color: 'var(--text-primary)' }}>
+                        PID {wl.pid} ({wl.policy})
+                      </span>
+                      <span className="digital-font" style={{
+                        fontSize: '0.65rem',
+                        padding: '1px 4px',
+                        borderRadius: '2px',
+                        backgroundColor: wl.status === 'running' ? 'rgba(16, 185, 129, 0.2)' : (wl.status === 'success' ? 'rgba(59, 130, 246, 0.2)' : 'rgba(239, 68, 68, 0.2)'),
+                        color: wl.status === 'running' ? '#10b981' : (wl.status === 'success' ? '#60a5fa' : '#ef4444')
+                      }}>
+                        {wl.status.toUpperCase()}
+                      </span>
+                    </div>
+                    {wl.error && (
+                      <div style={{ fontSize: '0.65rem', color: '#ef4444', marginTop: '2px', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {wl.error}
+                      </div>
+                    )}
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         </div>
 
@@ -1869,7 +2012,7 @@ export default function App() {
               <div className="terminal-console">
                 {auditData && auditData.lines.length > 0 ? (
                   auditData.lines.map((line, idx) => {
-                    let recordObj = {};
+                    let recordObj: any = {};
                     try {
                       recordObj = JSON.parse(line.json);
                     } catch (e) {}
@@ -1877,7 +2020,52 @@ export default function App() {
                     return (
                       <div key={idx} className="terminal-line">
                         <span className="terminal-timestamp">[{formatUtc(line.ts_utc)}]</span>
-                        <span style={{ color: '#fff', fontWeight: 'bold' }}>{line.record.toUpperCase()}</span>
+                        <span style={{ color: '#fff', fontWeight: 'bold' }}>
+                          {(() => {
+                            const record = line.record;
+                            if (record.includes("| IPFS:")) {
+                              const parts = record.split("| IPFS:");
+                              const textPart = parts[0].toUpperCase();
+                              const cidPart = parts[1].trim();
+                              const gatewayUrl = `http://localhost:8080/ipfs/${cidPart}`;
+                              return (
+                                <span>
+                                  {textPart} | <span style={{ color: '#f59e0b', fontWeight: 'bold' }}>IPFS: </span>
+                                  <a 
+                                    href={gatewayUrl} 
+                                    target="_blank" 
+                                    rel="noopener noreferrer" 
+                                    style={{ 
+                                      color: '#60a5fa', 
+                                      textDecoration: 'underline', 
+                                      cursor: 'pointer',
+                                      fontFamily: 'monospace'
+                                    }}
+                                    title="Apri nel gateway IPFS"
+                                  >
+                                    {cidPart}
+                                  </a>
+                                </span>
+                              );
+                            }
+                            if (record === "workload_start") {
+                              return (
+                                <span style={{ color: '#10b981' }}>
+                                  ⚡ [WORKLOAD IGNITION] PID {recordObj.pid} launched under policy "{recordObj.policy}"
+                                </span>
+                              );
+                            }
+                            if (record === "workload_stop") {
+                              const isSuccess = recordObj.status === "success" || recordObj.status === "killed";
+                              return (
+                                <span style={{ color: isSuccess ? '#60a5fa' : '#ef4444' }}>
+                                  ⏹️ [WORKLOAD DESTRUCTION] PID {recordObj.pid} stopped with status "{recordObj.status}"
+                                </span>
+                              );
+                            }
+                            return <span>{record.toUpperCase()}</span>;
+                          })()}
+                        </span>
                         <span style={{ color: 'rgba(16, 185, 129, 0.85)', marginLeft: '0.8rem' }}>
                           {JSON.stringify(recordObj)}
                         </span>

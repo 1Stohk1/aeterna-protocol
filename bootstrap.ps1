@@ -498,16 +498,29 @@ try {
     }
 
     # ------ 2. Julia scientific engine -----------------------------------
-    if (-not $SkipJulia) {
-        Write-Host "[2/4] Launching scientific engine (Julia, ZMQ) ..." -ForegroundColor Cyan
-        Start-Child -Label "scientific-engine" `
-                    -FilePath "julia" `
-                    -ArgumentList @("--project=scientific", "scientific\zmq_server.jl") `
-                    -ExtraEnv @{ AETERNA_ZMQ_ENDPOINT = "tcp://*:$ZmqPort" } | Out-Null
-        Wait-TcpReady -Port $ZmqPort -TimeoutSec $ZmqReadyTimeoutSec `
-                      -Label "scientific-engine"
+    $aeternaTomlPath = Join-Path $RepoRoot "aeterna.toml"
+    $isGvisor = $false
+    if (Test-Path $aeternaTomlPath) {
+        $tomlContent = Get-Content -Raw $aeternaTomlPath
+        if ($tomlContent -match 'isolation_mode\s*=\s*"gvisor"') {
+            $isGvisor = $true
+        }
+    }
+
+    if ($isGvisor) {
+        Write-Host "[2/4] isolation_mode=gvisor detected: Julia tasks will be launched dynamically on-demand by the Santuario Signer." -ForegroundColor Cyan
     } else {
-        Write-Host "[2/4] -SkipJulia: assuming engine already running on :$ZmqPort" -ForegroundColor DarkYellow
+        if (-not $SkipJulia) {
+            Write-Host "[2/4] Launching scientific engine (Julia, ZMQ) ..." -ForegroundColor Cyan
+            Start-Child -Label "scientific-engine" `
+                        -FilePath "julia" `
+                        -ArgumentList @("--project=scientific", "scientific\zmq_server.jl") `
+                        -ExtraEnv @{ AETERNA_ZMQ_ENDPOINT = "tcp://*:$ZmqPort" } | Out-Null
+            Wait-TcpReady -Port $ZmqPort -TimeoutSec $ZmqReadyTimeoutSec `
+                          -Label "scientific-engine"
+        } else {
+            Write-Host "[2/4] -SkipJulia: assuming engine already running on :$ZmqPort" -ForegroundColor DarkYellow
+        }
     }
 
     # ------ 3. Santuario exporter (Prometheus HTTP) ----------------------

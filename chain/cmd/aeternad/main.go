@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -32,12 +33,47 @@ type SubmitBlockPayload struct {
 	Signature       string `json:"signature"`
 }
 
+type TrustScore struct {
+	GuardianAddress string `json:"guardian_address"`
+	Score           uint32 `json:"score"`
+	TotalTasks      uint32 `json:"total_tasks"`
+	SuccessfulTasks uint32 `json:"successful_tasks"`
+	LastUpdated     int64  `json:"last_updated"`
+}
+
+type TaskProof struct {
+	TaskId          string `json:"task_id"`
+	Creator         string `json:"creator"`
+	ManifestHash    string `json:"manifest_hash"`
+	GcContentCount  uint32 `json:"gc_content_count"`
+	HammingDistance uint32 `json:"hamming_distance"`
+	RefHash         string `json:"ref_hash"`
+	ObsHash         string `json:"obs_hash"`
+	Proof           []byte `json:"proof"`
+	Verified        bool   `json:"verified"`
+	Height          int64  `json:"height"`
+	IpfsCid         string `json:"ipfs_cid,omitempty"`
+}
+
+type SubmitProofPayload struct {
+	Creator         string      `json:"creator"`
+	TaskId          string      `json:"task_id"`
+	ManifestHash    string      `json:"manifest_hash"`
+	GcContentCount  uint32      `json:"gc_content_count"`
+	HammingDistance uint32      `json:"hamming_distance"`
+	RefHash         string      `json:"ref_hash"`
+	ObsHash         string      `json:"obs_hash"`
+	Proof           interface{} `json:"proof"`
+	IpfsCid         string      `json:"ipfs_cid,omitempty"`
+}
+
 type NodeState struct {
 	mu           sync.RWMutex
 	startTime    time.Time
 	startHeight  uint64
 	guardians    map[string]SBT
-	trustScores  map[string]string // address -> trust_score
+	trustScores  map[string]TrustScore // address -> TrustScore
+	taskProofs   map[string]TaskProof  // task_id -> TaskProof
 	moniker      string
 	rpcAddr      string
 	restAddr     string
@@ -191,7 +227,13 @@ func (s *NodeState) HandleRegisterSBT(w http.ResponseWriter, r *http.Request) {
 	s.mu.Lock()
 	s.guardians[payload.GuardianAddress] = sbt
 	if _, exists := s.trustScores[payload.GuardianAddress]; !exists {
-		s.trustScores[payload.GuardianAddress] = "0.500000000000000000" // Initial score: 50%
+		s.trustScores[payload.GuardianAddress] = TrustScore{
+			GuardianAddress: payload.GuardianAddress,
+			Score:           500000,
+			TotalTasks:      0,
+			SuccessfulTasks: 0,
+			LastUpdated:     time.Now().Unix(),
+		}
 	}
 	s.mu.Unlock()
 
@@ -234,7 +276,8 @@ func (s *NodeState) HandleSmartQuery(w http.ResponseWriter, r *http.Request) {
 		if addr, ok := getTrustScore["address"].(string); ok {
 			s.mu.RLock()
 			if storedScore, ok := s.trustScores[addr]; ok {
-				score = storedScore
+				scoreVal := float64(storedScore.Score) / 1000000.0
+				score = fmt.Sprintf("%.18f", scoreVal)
 			}
 			s.mu.RUnlock()
 		}
@@ -271,28 +314,201 @@ func (s *NodeState) HandleSubmitBlock(w http.ResponseWriter, r *http.Request) {
 	}
 
 	s.mu.Lock()
-	currentScoreStr, exists := s.trustScores[payload.GuardianAddress]
-	var currentScore float64 = 0.5
-	if exists {
-		if val, err := strconv.ParseFloat(currentScoreStr, 64); err == nil {
-			currentScore = val
+	ts, exists := s.trustScores[payload.GuardianAddress]
+	if !exists {
+		ts = TrustScore{
+			GuardianAddress: payload.GuardianAddress,
+			Score:           500000,
+			TotalTasks:      0,
+			SuccessfulTasks: 0,
 		}
 	}
 
-	newScore := currentScore + 0.05
-	if newScore > 1.0 {
-		newScore = 1.0
+	ts.TotalTasks++
+	ts.SuccessfulTasks++
+	// Add 5% (50000 points) to the score, cap at 1,000,000 (100.00%)
+	newScoreVal := ts.Score + 50000
+	if newScoreVal > 1000000 {
+		newScoreVal = 1000000
 	}
-
-	newScoreStr := fmt.Sprintf("%.18f", newScore)
-	s.trustScores[payload.GuardianAddress] = newScoreStr
+	ts.Score = newScoreVal
+	ts.LastUpdated = time.Now().Unix()
+	s.trustScores[payload.GuardianAddress] = ts
 	s.mu.Unlock()
 
-	log.Printf("[%s] Block submitted by %s. Trust score updated from %s to %s\n", s.moniker, payload.GuardianAddress, currentScoreStr, newScoreStr)
+	newScoreStr := fmt.Sprintf("%.18f", float64(newScoreVal)/1000000.0)
+	log.Printf("[%s] Block submitted by %s. Trust score updated to %s\n", s.moniker, payload.GuardianAddress, newScoreStr)
 
 	json.NewEncoder(w).Encode(map[string]interface{}{
 		"success":     true,
 		"trust_score": newScoreStr,
+	})
+}
+
+func decodeProof(proofRaw interface{}) ([]byte, error) {
+	if proofRaw == nil {
+		return nil, fmt.Errorf("proof is nil")
+	}
+
+	switch val := proofRaw.(type) {
+	case string:
+		// Attempt Hex decoding
+		bz, err := hex.DecodeString(val)
+		if err == nil && len(bz) == 128 {
+			return bz, nil
+		}
+		// Attempt Base64 decoding
+		bz, err = base64.StdEncoding.DecodeString(val)
+		if err == nil {
+			return bz, nil
+		}
+		// Try URL-safe Base64
+		bz, err = base64.URLEncoding.DecodeString(val)
+		if err == nil {
+			return bz, nil
+		}
+		return nil, fmt.Errorf("failed to decode proof as hex or base64")
+
+	case []interface{}:
+		bz := make([]byte, len(val))
+		for i, x := range val {
+			f, ok := x.(float64)
+			if !ok {
+				return nil, fmt.Errorf("invalid byte type at index %d", i)
+			}
+			bz[i] = byte(f)
+		}
+		return bz, nil
+	}
+
+	return nil, fmt.Errorf("unsupported proof format type: %T", proofRaw)
+}
+
+func (s *NodeState) HandleSubmitProof(w http.ResponseWriter, r *http.Request) {
+	var payload SubmitProofPayload
+	w.Header().Set("Content-Type", "application/json")
+
+	body, err := io.ReadAll(r.Body)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Failed to read body"})
+		return
+	}
+
+	if err := json.Unmarshal(body, &payload); err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Invalid payload JSON"})
+		return
+	}
+
+	if payload.Creator == "" || payload.TaskId == "" || payload.ManifestHash == "" || payload.RefHash == "" || payload.ObsHash == "" {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Missing required fields"})
+		return
+	}
+
+	proofBytes, err := decodeProof(payload.Proof)
+	if err != nil {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("Invalid proof format: %v", err)})
+		return
+	}
+
+	if len(proofBytes) != 128 {
+		w.WriteHeader(http.StatusBadRequest)
+		json.NewEncoder(w).Encode(map[string]string{
+			"error": fmt.Sprintf("invalid zk-SNARK proof size: expected exactly 128 bytes, got %d", len(proofBytes)),
+		})
+		return
+	}
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	if _, exists := s.taskProofs[payload.TaskId]; exists {
+		w.WriteHeader(http.StatusConflict)
+		json.NewEncoder(w).Encode(map[string]string{"error": fmt.Sprintf("task_id '%s' has already been submitted", payload.TaskId)})
+		return
+	}
+
+	height := int64(s.startHeight + uint64(time.Since(s.startTime).Seconds()/6.0))
+	taskProof := TaskProof{
+		TaskId:          payload.TaskId,
+		Creator:         payload.Creator,
+		ManifestHash:    payload.ManifestHash,
+		GcContentCount:  payload.GcContentCount,
+		HammingDistance: payload.HammingDistance,
+		RefHash:         payload.RefHash,
+		ObsHash:         payload.ObsHash,
+		Proof:           proofBytes,
+		Verified:        true,
+		Height:          height,
+		IpfsCid:         payload.IpfsCid,
+	}
+	s.taskProofs[payload.TaskId] = taskProof
+
+	ts, exists := s.trustScores[payload.Creator]
+	if !exists {
+		ts = TrustScore{
+			GuardianAddress: payload.Creator,
+			Score:           500000,
+			TotalTasks:      0,
+			SuccessfulTasks: 0,
+		}
+	}
+
+	ts.TotalTasks++
+	ts.SuccessfulTasks++
+	ts.Score = uint32((uint64(ts.SuccessfulTasks) * 1000000) / uint64(ts.TotalTasks))
+	ts.LastUpdated = time.Now().Unix()
+	s.trustScores[payload.Creator] = ts
+
+	log.Printf("[%s] Proof submitted successfully for task %s by %s. Trust score: %d/1000000\n",
+		s.moniker, payload.TaskId, payload.Creator, ts.Score)
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"verified": true,
+		"success":  true,
+	})
+}
+
+func (s *NodeState) HandleGetTrustScore(w http.ResponseWriter, r *http.Request) {
+	address := r.PathValue("address")
+	if address == "" {
+		parts := strings.Split(r.URL.Path, "/")
+		if len(parts) > 0 {
+			address = parts[len(parts)-1]
+		}
+	}
+
+	s.mu.RLock()
+	ts, exists := s.trustScores[address]
+	s.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	if !exists {
+		w.WriteHeader(http.StatusNotFound)
+		json.NewEncoder(w).Encode(map[string]string{"error": "Trust score not found for address"})
+		return
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"trust_score": ts,
+	})
+}
+
+func (s *NodeState) HandleListProofs(w http.ResponseWriter, r *http.Request) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	w.Header().Set("Content-Type", "application/json")
+	list := make([]TaskProof, 0, len(s.taskProofs))
+	for _, p := range s.taskProofs {
+		list = append(list, p)
+	}
+
+	json.NewEncoder(w).Encode(map[string]interface{}{
+		"proofs": list,
 	})
 }
 
@@ -378,7 +594,8 @@ func main() {
 		flag.Parse()
 
 		guardians := make(map[string]SBT)
-		trustScores := make(map[string]string)
+		trustScores := make(map[string]TrustScore)
+		taskProofs := make(map[string]TaskProof)
 
 		homeDir := *homeFlag
 		if homeDir == "" {
@@ -413,7 +630,13 @@ func main() {
 													RegisteredAtHeight: regHeight,
 													Signature:          sig,
 												}
-												trustScores[addr] = "0.500000000000000000"
+												trustScores[addr] = TrustScore{
+													GuardianAddress: addr,
+													Score:           500000,
+													TotalTasks:      0,
+													SuccessfulTasks: 0,
+													LastUpdated:     time.Now().Unix(),
+												}
 												log.Printf("[%s] Loaded genesis SBT for guardian: %s\n", *moniker, addr)
 											}
 										}
@@ -431,6 +654,7 @@ func main() {
 			startHeight: 1,
 			guardians:   guardians,
 			trustScores: trustScores,
+			taskProofs:  taskProofs,
 			moniker:     *moniker,
 			rpcAddr:     *rpcAddr,
 			restAddr:    *restAddr,
@@ -451,6 +675,9 @@ func main() {
 		restMux.HandleFunc("POST /aeterna/guardian/v1/register", state.HandleRegisterSBT)
 		restMux.HandleFunc("GET /cosmwasm/wasm/v1/contract/{contract}/smart/{query_base64}", state.HandleSmartQuery)
 		restMux.HandleFunc("POST /cosmwasm/wasm/v1/contract/{contract}/submit_block", state.HandleSubmitBlock)
+		restMux.HandleFunc("POST /aeterna/oracle/v1/submit_proof", state.HandleSubmitProof)
+		restMux.HandleFunc("GET /aeterna/trustscore/v1/score/{address}", state.HandleGetTrustScore)
+		restMux.HandleFunc("GET /aeterna/oracle/v1/proof", state.HandleListProofs)
 
 		log.Printf("Starting aeternad emulator [%s]...\n", *moniker)
 		log.Printf("CometBFT RPC listening on: http://%s\n", *rpcAddr)

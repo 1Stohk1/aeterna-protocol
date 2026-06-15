@@ -58,6 +58,7 @@ func (k msgServer) SubmitProof(goCtx context.Context, msg *types.MsgSubmitProof)
 		Proof:           msg.Proof,
 		Verified:        verified,
 		Height:          ctx.BlockHeight(),
+		IpfsCid:         msg.IpfsCid,
 	}
 	k.SetTaskProof(ctx, msg.TaskId, tp)
 

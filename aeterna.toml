@@ -78,7 +78,7 @@ ttl                      = 7                  # Max gossip hops
 [santuario]
 # Rust kernel — stubbed in v0.0.1, wired in v0.1.0.
 enabled                  = true              # Flip to true once santuario-core is built
-isolation_mode           = "seccomp"          # seccomp (v0.1) | gvisor (v0.5) | firecracker (v1.0)
+isolation_mode           = "gvisor"          # seccomp (v0.1) | gvisor (v0.5) | firecracker (v1.0)
 kernel_filter            = "seccomp-bpf"
 ipc_transport            = "grpc_uds"         # gRPC over Unix Domain Sockets, encrypted
 ipc_socket               = "/run/aeterna/santuario.sock"
@@ -93,7 +93,7 @@ temperature              = 0.3
 
 [vault]
 # Checkpoint and secret storage.
-storage_mode             = "local_encrypted"  # local (v0.0.1 default) | local_encrypted (v0.2.0) | ipfs (v0.5+)
+storage_mode             = "ipfs"  # local (v0.0.1 default) | local_encrypted (v0.2.0) | ipfs (v0.5+)
 local_path               = "./santuario/vault/checkpoints"
 encryption               = "aes-256-gcm"
 key_derivation           = "tpm2_sealed"      # Key is never in plaintext RAM
