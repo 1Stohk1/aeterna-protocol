@@ -7,6 +7,7 @@ NODE2_URL="http://127.0.0.1:1318"
 GUARDIAN="aeterna1prometheus1address"
 TASK_ID="task_e2e_bash_$(date +%s)"
 VALID_PROOF=$(printf 'a%.0s' {1..256}) # 256 characters = 128 bytes in hex
+DUMMY_SIGNATURE=$(printf '4%.0s' {1..9190}) # 9190 hex chars = 4595 bytes
 
 echo "=================================================="
 echo "AETERNA E2E ORACLE BASH VALIDATION"
@@ -25,7 +26,8 @@ curl -i -X POST -H "Content-Type: application/json" -d "{
   \"hamming_distance\": 3,
   \"ref_hash\": \"dummy_ref_hash_val\",
   \"obs_hash\": \"dummy_obs_hash_val\",
-  \"proof\": \"$VALID_PROOF\"
+  \"proof\": \"$VALID_PROOF\",
+  \"signature\": \"$DUMMY_SIGNATURE\"
 }" "$NODE2_URL/aeterna/oracle/v1/submit_proof"
 echo -e "\n"
 
@@ -42,7 +44,8 @@ curl -i -X POST -H "Content-Type: application/json" -d "{
   \"hamming_distance\": 3,
   \"ref_hash\": \"dummy_ref_hash_val\",
   \"obs_hash\": \"dummy_obs_hash_val\",
-  \"proof\": \"$VALID_PROOF\"
+  \"proof\": \"$VALID_PROOF\",
+  \"signature\": \"$DUMMY_SIGNATURE\"
 }" "$NODE2_URL/aeterna/oracle/v1/submit_proof"
 echo -e "\n"
 
@@ -56,7 +59,8 @@ curl -i -X POST -H "Content-Type: application/json" -d "{
   \"hamming_distance\": 3,
   \"ref_hash\": \"dummy_ref_hash_val\",
   \"obs_hash\": \"dummy_obs_hash_val\",
-  \"proof\": \"$INVALID_PROOF\"
+  \"proof\": \"$INVALID_PROOF\",
+  \"signature\": \"$DUMMY_SIGNATURE\"
 }" "$NODE2_URL/aeterna/oracle/v1/submit_proof"
 echo -e "\n"
 
@@ -69,7 +73,8 @@ curl -i -X POST -H "Content-Type: application/json" -d "{
   \"hamming_distance\": 3,
   \"ref_hash\": \"dummy_ref_hash_val\",
   \"obs_hash\": \"dummy_obs_hash_val\",
-  \"proof\": \"$VALID_PROOF\"
+  \"proof\": \"$VALID_PROOF\",
+  \"signature\": \"$DUMMY_SIGNATURE\"
 }" "$NODE1_URL/aeterna/oracle/v1/submit_proof"
 echo -e "\n"
 

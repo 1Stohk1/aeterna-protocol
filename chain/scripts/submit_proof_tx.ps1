@@ -14,10 +14,10 @@ function Get-TrustScore($BaseUrl, $Address) {
     $url = "$BaseUrl/aeterna/trustscore/v1/score/$Address"
     try {
         $res = Invoke-RestMethod -Uri $url -Method Get
-        Write-Host "  - Score: $($res.trust_score.score) / 1,000,000"
-        Write-Host "  - Total Tasks: $($res.trust_score.total_tasks)"
-        Write-Host "  - Successful Tasks: $($res.trust_score.successful_tasks)"
-        return $res.trust_score
+        Write-Host "  - Score: $($res.score)"
+        Write-Host "  - Total Tasks: $($res.total_tasks)"
+        Write-Host "  - Successful Tasks: $($res.successful_tasks)"
+        return $res
     } catch {
         Write-Host "  - Error fetching trust score from $url" -ForegroundColor Red
         return $null
@@ -67,6 +67,7 @@ $payload = @{
     obs_hash = "dummy_obs_hash_val"
     proof = $ValidProofHex
     ipfs_cid = "QmOfflineFallbackCidTest123"
+    signature = "42" * 4595
 }
 $submitRes = Submit-Proof -BaseUrl $Node2_URL -Payload $payload
 

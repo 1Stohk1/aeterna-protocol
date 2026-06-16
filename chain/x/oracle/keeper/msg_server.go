@@ -4,6 +4,7 @@ import (
 	"context"
 
 	sdkerrors "cosmossdk.io/errors"
+	"github.com/cloudflare/circl/sign/dilithium"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
 	"github.com/aeterna-protocol/aeterna/chain/x/oracle/types"
@@ -41,12 +42,29 @@ func (k msgServer) SubmitProof(goCtx context.Context, msg *types.MsgSubmitProof)
 		return nil, sdkerrors.Wrapf(types.ErrInvalidProof, "expected exactly 128 bytes, got %d", len(msg.Proof))
 	}
 
-	// 4. Verify zk-SNARK proof logic (mocked scaffold)
+	// 4. Verify Dilithium-5 signature natively on-chain
+	sbt, exists := k.guardianKeeper.GetSBT(ctx, msg.Creator)
+	if !exists {
+		return nil, types.ErrSBTNotFound
+	}
+
+	mode := dilithium.Mode5
+	if len(sbt.DilithiumPubkey) != mode.PublicKeySize() {
+		return nil, sdkerrors.Wrap(types.ErrInvalidSignature, "invalid Dilithium-5 public key size")
+	}
+	pubKey := mode.PublicKeyFromBytes(sbt.DilithiumPubkey)
+
+	msgBytes := append([]byte(msg.TaskId), []byte(msg.ManifestHash)...)
+	if !mode.Verify(pubKey, msgBytes, msg.Signature) {
+		return nil, types.ErrInvalidSignature
+	}
+
+	// 5. Verify zk-SNARK proof logic (mocked scaffold)
 	// In production, this verifies the Groth16 pairing equation e(A, B) = e(alpha, beta) * ...
 	// using the public inputs: manifest_hash, task_id, gc_content, hamming, ref_hash, obs_hash.
 	verified := true
 
-	// 5. Save proof results
+	// 6. Save proof results
 	tp := types.TaskProof{
 		TaskId:          msg.TaskId,
 		Creator:         msg.Creator,
@@ -62,7 +80,7 @@ func (k msgServer) SubmitProof(goCtx context.Context, msg *types.MsgSubmitProof)
 	}
 	k.SetTaskProof(ctx, msg.TaskId, tp)
 
-	// 6. Record task completion in trustscore module (cross-module call)
+	// 7. Record task completion in trustscore module (cross-module call)
 	k.trustscoreKeeper.RecordTaskCompletion(ctx, msg.Creator, verified)
 
 	// Emit event

@@ -6,6 +6,7 @@ interface StatusData {
   signer_online: boolean;
   ready: boolean;
   sealed: boolean;
+  seccomp_active?: boolean;
   node_id: string;
   reason?: string;
 }
@@ -54,6 +55,20 @@ interface OllamaStatus {
   healthy: boolean;
   model_available: boolean;
   model_name: string;
+}
+
+interface AnchorCheckpoint {
+  btc_tx_hash: string;
+  block_hash: string;
+  block_height: number;
+  creator: string;
+  event_name: string;
+  timestamp: number;
+}
+
+interface AnchorResponse {
+  latest_anchor: AnchorCheckpoint | null;
+  connected: boolean;
 }
 
 interface ProjectionData {
@@ -108,6 +123,12 @@ export default function App() {
   useEffect(() => {
     sanctuaryStatusRef.current = sanctuaryStatus;
   }, [sanctuaryStatus]);
+
+  const [anchorData, setAnchorData] = useState<AnchorResponse | null>(null);
+  const anchorDataRef = useRef<AnchorResponse | null>(null);
+  useEffect(() => {
+    anchorDataRef.current = anchorData;
+  }, [anchorData]);
 
   // Derive running workloads from audit logs
   const runningWorkloads = useMemo(() => {
@@ -231,6 +252,27 @@ export default function App() {
   const consolidationTargetRef = useRef<[number, number, number]>([0, 0, 0]);
   const consolidationParticlesRef = useRef<{ x: number; y: number; z: number; progress: number; speed: number; delay: number }[]>([]);
 
+  // Workload Sandboxing Container Nodes Ref
+  const runningWorkloadsRef = useRef<any[]>([]);
+  useEffect(() => {
+    runningWorkloadsRef.current = runningWorkloads;
+  }, [runningWorkloads]);
+
+  interface ContainerNode {
+    pid: number;
+    policy: string;
+    x: number;
+    y: number;
+    z: number;
+    birthTime: number;
+    deathTime: number | null;
+    spawnFlash: number;
+    deathFlash: number;
+    isGvisor: boolean;
+    particles: { x: number; y: number; z: number; vx: number; vy: number; vz: number; life: number; color: string }[];
+  }
+  const containerNodesRef = useRef<Record<number, ContainerNode>>({});
+
 
 
   // Fetch status, metrics, peers, audit logs
@@ -283,6 +325,13 @@ export default function App() {
       if (shipperRes.ok) {
         const data = await shipperRes.json();
         setShipperStatus(data);
+      }
+
+      // 8. Bitcoin L1 Anchor Status
+      const anchorRes = await fetch('http://127.0.0.1:8000/api/anchor/latest');
+      if (anchorRes.ok) {
+        const data = await anchorRes.json();
+        setAnchorData(data);
       }
     } catch (err) {
       console.error('Error fetching dashboard API data:', err);
@@ -526,6 +575,55 @@ export default function App() {
     yawRef.current = 0;
     pitchRef.current = 0.45;
     zoomRef.current = 1.0;
+  };
+
+  // Trigger benchmark (real if online, simulated if offline)
+  const triggerSimulatedBenchmark = async () => {
+    try {
+      const res = await fetch('http://127.0.0.1:8000/api/benchmark');
+      if (res.ok) {
+        const data = await res.json();
+        if (data.status === 'triggered') {
+          if (auditData) {
+            setAuditData({
+              lines: [
+                { ts_utc: Date.now() / 1000, record: `[INFO] BENCHMARK: Avvio asincrono task di calcolo (Gompertz) in sandbox. ID: ${data.id_task}`, json: "{}" },
+                ...auditData.lines
+              ]
+            });
+          }
+          return;
+        }
+      }
+    } catch (e) {}
+
+    // Offline / fallback simulator
+    const simPid = Math.floor(1000 + Math.random() * 9000);
+    const policy = "julia";
+    const startLog: AuditLine = {
+      ts_utc: Date.now() / 1000,
+      record: "workload_start",
+      json: JSON.stringify({ record: "workload_start", ts_utc: Date.now() / 1000, pid: simPid, policy })
+    };
+    
+    // Inject start
+    setAuditData(current => {
+      if (!current) return { lines: [startLog] };
+      return { lines: [startLog, ...current.lines] };
+    });
+
+    // Inject stop after 4 seconds
+    setTimeout(() => {
+      const stopLog: AuditLine = {
+        ts_utc: Date.now() / 1000,
+        record: "workload_stop",
+        json: JSON.stringify({ record: "workload_stop", ts_utc: Date.now() / 1000, pid: simPid, status: "success" })
+      };
+      setAuditData(current => {
+        if (!current) return { lines: [stopLog] };
+        return { lines: [stopLog, ...current.lines] };
+      });
+    }, 4000);
   };
 
   // Canvas HUD Projection Animation Loop
@@ -1283,6 +1381,272 @@ export default function App() {
         }
       }
 
+      // 11.6 Bitcoin L1 Anchor Visualisation
+      if (anchorDataRef.current && anchorDataRef.current.latest_anchor) {
+        const latest = anchorDataRef.current.latest_anchor;
+        const btc_tx = latest.btc_tx_hash;
+        if (btc_tx) {
+          const bx = -0.7;
+          const by = -0.4;
+          const bz = -0.7;
+          const pt = project3D(bx, by, bz);
+          
+          // General Centroid coordinate
+          const gx = 0.60;
+          const gy = 0.40;
+          const gz = 0.20;
+          const gpt = project3D(gx, gy, gz);
+          
+          if (isFinite(pt.x) && isFinite(pt.y) && isFinite(gpt.x) && isFinite(gpt.y)) {
+            // Draw golden filament (glowing yellow/amber line connecting Generale to Bitcoin Anchor)
+            ctx.strokeStyle = 'rgba(245, 158, 11, 0.4)'; // bright amber/gold
+            ctx.lineWidth = 2.0;
+            ctx.beginPath();
+            ctx.moveTo(gpt.x, gpt.y);
+            ctx.lineTo(pt.x, pt.y);
+            ctx.stroke();
+            
+            // Draw vertical dashed line to floor
+            const floorPt = project3D(bx, 0, bz);
+            if (isFinite(floorPt.x) && isFinite(floorPt.y)) {
+              ctx.strokeStyle = 'rgba(245, 158, 11, 0.15)';
+              ctx.lineWidth = 1;
+              ctx.setLineDash([2, 3]);
+              ctx.beginPath();
+              ctx.moveTo(pt.x, pt.y);
+              ctx.lineTo(floorPt.x, floorPt.y);
+              ctx.stroke();
+              ctx.setLineDash([]);
+            }
+            
+            // Draw golden node (diamond shape representing Bitcoin L1 anchor)
+            ctx.strokeStyle = 'rgba(245, 158, 11, 0.8)';
+            ctx.fillStyle = 'rgba(17, 24, 39, 0.9)';
+            ctx.lineWidth = 2;
+            const size = 12 * pt.scale;
+            ctx.beginPath();
+            ctx.moveTo(pt.x, pt.y - size);
+            ctx.lineTo(pt.x + size, pt.y);
+            ctx.lineTo(pt.x, pt.y + size);
+            ctx.lineTo(pt.x - size, pt.y);
+            ctx.closePath();
+            ctx.stroke();
+            ctx.fill();
+            
+            // Inner core
+            ctx.fillStyle = '#f59e0b';
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, 3 * pt.scale, 0, Math.PI * 2);
+            ctx.fill();
+            
+            // Label
+            ctx.fillStyle = 'rgba(245, 158, 11, 0.9)';
+            ctx.font = '7.5px "Share Tech Mono"';
+            ctx.fillText('₿ Bitcoin L1 Anchor', pt.x - 32 * pt.scale, pt.y + size + 9 * pt.scale);
+            
+            ctx.fillStyle = 'rgba(243, 244, 246, 0.6)';
+            ctx.font = '6.5px "Share Tech Mono"';
+            ctx.fillText(`BTC TX: ${btc_tx.substring(0, 10)}...`, pt.x - 32 * pt.scale, pt.y + size + 16 * pt.scale);
+            
+            // Glowing pulse moving from General Centroid to Bitcoin Anchor
+            const pulseProgress = (time * 0.00025) % 1.0;
+            const px = gx + (bx - gx) * pulseProgress;
+            const py = gy + (by - gy) * pulseProgress;
+            const pz = gz + (bz - gz) * pulseProgress;
+            const pulsePt = project3D(px, py, pz);
+            
+            if (isFinite(pulsePt.x) && isFinite(pulsePt.y)) {
+              const grad = ctx.createRadialGradient(pulsePt.x, pulsePt.y, 1, pulsePt.x, pulsePt.y, 8 * pulsePt.scale);
+              grad.addColorStop(0, 'rgba(245, 158, 11, 1)');
+              grad.addColorStop(0.5, 'rgba(245, 158, 11, 0.4)');
+              grad.addColorStop(1, 'rgba(245, 158, 11, 0)');
+              ctx.fillStyle = grad;
+              ctx.beginPath();
+              ctx.arc(pulsePt.x, pulsePt.y, 8 * pulsePt.scale, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          }
+        }
+      }
+
+      // 11.75 Workload Sandboxing Container Nodes Synchronization & Rendering
+      const currentRunning = runningWorkloadsRef.current || [];
+      const currentRunningPids = new Set(currentRunning.map(w => w.pid));
+
+      // Synchronize births
+      for (const w of currentRunning) {
+        if (!containerNodesRef.current[w.pid]) {
+          const angle = (w.pid * 1.37) % (Math.PI * 2);
+          const wx = 0.85 * Math.cos(angle);
+          const wy = 0.3 + 0.15 * Math.sin(w.pid * 0.9);
+          const wz = 0.85 * Math.sin(angle);
+          const isGvisor = status?.seccomp_active ?? false;
+          
+          containerNodesRef.current[w.pid] = {
+            pid: w.pid,
+            policy: w.policy,
+            x: wx,
+            y: wy,
+            z: wz,
+            birthTime: time,
+            deathTime: null,
+            spawnFlash: 1.0,
+            deathFlash: 0.0,
+            isGvisor,
+            particles: []
+          };
+        }
+      }
+
+      // Synchronize deaths
+      for (const pidStr in containerNodesRef.current) {
+        const pid = parseInt(pidStr);
+        const node = containerNodesRef.current[pid];
+        if (!currentRunningPids.has(pid) && node.deathTime === null) {
+          node.deathTime = time;
+          node.deathFlash = 1.0;
+          
+          // Spawn destruction particles
+          const color = node.isGvisor ? '#10b981' : '#3b82f6';
+          for (let i = 0; i < 15; i++) {
+            node.particles.push({
+              x: node.x,
+              y: node.y,
+              z: node.z,
+              vx: (Math.random() - 0.5) * 0.02,
+              vy: (Math.random() - 0.5) * 0.02,
+              vz: (Math.random() - 0.5) * 0.02,
+              life: 1.0,
+              color
+            });
+          }
+        }
+      }
+
+      // Update and render nodes
+      for (const pidStr in containerNodesRef.current) {
+        const pid = parseInt(pidStr);
+        const node = containerNodesRef.current[pid];
+        
+        // Expiration check
+        if (node.deathTime !== null && (time - node.deathTime > 1000)) {
+          delete containerNodesRef.current[pid];
+          continue;
+        }
+
+        // Decay flashes
+        node.spawnFlash = Math.max(0.0, 1.0 - (time - node.birthTime) / 800);
+        if (node.deathTime !== null) {
+          node.deathFlash = Math.max(0.0, 1.0 - (time - node.deathTime) / 1000);
+        }
+
+        // Update particles
+        node.particles.forEach(p => {
+          p.x += p.vx;
+          p.y += p.vy;
+          p.z += p.vz;
+          p.life -= 0.02;
+        });
+        node.particles = node.particles.filter(p => p.life > 0);
+
+        // Project node to 2D
+        const pt = project3D(node.x, node.y, node.z);
+        if (isFinite(pt.x) && isFinite(pt.y)) {
+          const depthOpacity = Math.max(0.2, Math.min(1.0, 1 - (pt.z + 1.2) / 2.4));
+          
+          // Draw particles
+          node.particles.forEach(p => {
+            const ppt = project3D(p.x, p.y, p.z);
+            if (isFinite(ppt.x) && isFinite(ppt.y)) {
+              ctx.fillStyle = p.color + Math.floor(p.life * depthOpacity * 255).toString(16).padStart(2, '0');
+              ctx.beginPath();
+              ctx.arc(ppt.x, ppt.y, 1.5 * ppt.scale, 0, Math.PI * 2);
+              ctx.fill();
+            }
+          });
+
+          const baseColor = node.isGvisor ? '#10b981' : '#3b82f6';
+          let opacity = depthOpacity;
+          if (node.deathTime !== null) {
+            opacity *= node.deathFlash;
+          }
+
+          // Draw spawn flash glow
+          if (node.spawnFlash > 0 && node.deathTime === null) {
+            const pulseRadius = (20 + node.spawnFlash * 30) * pt.scale;
+            const grad = ctx.createRadialGradient(pt.x, pt.y, 1, pt.x, pt.y, pulseRadius);
+            grad.addColorStop(0, `rgba(16, 185, 129, ${node.spawnFlash * opacity * 0.8})`);
+            grad.addColorStop(0.5, `rgba(16, 185, 129, ${node.spawnFlash * opacity * 0.2})`);
+            grad.addColorStop(1, 'rgba(16, 185, 129, 0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, pulseRadius, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // Draw death flash glow
+          if (node.deathTime !== null && node.deathFlash > 0) {
+            const pulseRadius = (12 + (1 - node.deathFlash) * 40) * pt.scale;
+            const grad = ctx.createRadialGradient(pt.x, pt.y, 1, pt.x, pt.y, pulseRadius);
+            grad.addColorStop(0, `rgba(239, 68, 68, ${node.deathFlash * opacity * 0.8})`);
+            grad.addColorStop(0.5, `rgba(245, 158, 11, ${node.deathFlash * opacity * 0.3})`);
+            grad.addColorStop(1, 'rgba(239, 68, 68, 0)');
+            ctx.fillStyle = grad;
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, pulseRadius, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // Vertical line from floor
+          const floorPt = project3D(node.x, 0, node.z);
+          if (isFinite(floorPt.x) && isFinite(floorPt.y)) {
+            ctx.strokeStyle = node.isGvisor ? `rgba(16, 185, 129, ${opacity * 0.15})` : `rgba(59, 130, 246, ${opacity * 0.15})`;
+            ctx.lineWidth = 1;
+            ctx.setLineDash([2, 3]);
+            ctx.beginPath();
+            ctx.moveTo(pt.x, pt.y);
+            ctx.lineTo(floorPt.x, floorPt.y);
+            ctx.stroke();
+            ctx.setLineDash([]);
+          }
+
+          // Draw shape
+          const size = 9 * pt.scale;
+          ctx.strokeStyle = baseColor + Math.floor(opacity * 255).toString(16).padStart(2, '0');
+          ctx.lineWidth = 1.5;
+
+          if (node.isGvisor) {
+            ctx.strokeRect(pt.x - size/2, pt.y - size/2, size, size);
+            ctx.fillStyle = `rgba(16, 185, 129, ${opacity * 0.15})`;
+            ctx.fillRect(pt.x - size/2, pt.y - size/2, size, size);
+            ctx.strokeStyle = `rgba(255, 255, 255, ${opacity * 0.25})`;
+            ctx.strokeRect(pt.x - size/2 - 2, pt.y - size/2 - 2, size + 4, size + 4);
+          } else {
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, size * 0.6, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.strokeStyle = `rgba(59, 130, 246, ${opacity * 0.4})`;
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, size, 0, Math.PI * 2);
+            ctx.stroke();
+            ctx.fillStyle = `rgba(59, 130, 246, ${opacity * 0.1})`;
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, size * 0.6, 0, Math.PI * 2);
+            ctx.fill();
+          }
+
+          // Label
+          ctx.fillStyle = `rgba(243, 244, 246, ${opacity})`;
+          ctx.font = '7.5px "Share Tech Mono"';
+          const label = node.isGvisor ? `gVisor (PID ${node.pid})` : `Host Proc (PID ${node.pid})`;
+          ctx.fillText(label, pt.x + size/2 + 6, pt.y + 2);
+          
+          ctx.fillStyle = node.isGvisor ? `rgba(16, 185, 129, ${opacity * 0.8})` : `rgba(59, 130, 246, ${opacity * 0.8})`;
+          ctx.font = '6.5px "Share Tech Mono"';
+          ctx.fillText(`POLICY: ${node.policy.toUpperCase()}`, pt.x + size/2 + 6, pt.y + 9);
+        }
+      }
+
       // 12. Draw live digital matrix overlays (top-left metadata)
       ctx.fillStyle = 'rgba(6, 182, 212, 0.4)';
       ctx.font = '8px "Share Tech Mono"';
@@ -1309,7 +1673,7 @@ export default function App() {
     return () => {
       if (animationFrameRef.current) cancelAnimationFrame(animationFrameRef.current);
     };
-  }, [lastProjection, status, sproutedExperts, chatMessages]);
+  }, [lastProjection, status, sproutedExperts, chatMessages, anchorData]);
 
   // Handle status indicators
   const isOnline = status?.signer_online;
@@ -1691,6 +2055,9 @@ export default function App() {
                   {/* Floating Simulation Toolbar */}
                   <div className="hud-sim-toolbar">
                     <span className="hud-sim-title digital-font">SIMULATORE:</span>
+                    <button className="hud-sim-btn sprout" style={{ border: '1px solid #10b981', color: '#10b981' }} onClick={triggerSimulatedBenchmark} title="Avvia benchmark reale (se online) o simula container effimero">
+                      <span>🚀</span> BENCHMARK
+                    </button>
                     <button className="hud-sim-btn sprout" onClick={triggerSimulatedSprouting} title="Simula sprouting di un nuovo esperto per concetto OOD">
                       <span>🌱</span> SPROUT
                     </button>
@@ -1794,6 +2161,89 @@ export default function App() {
                           {lastProjection.routing.toUpperCase()}
                         </strong>
                       </span>
+                    </div>
+                  )}
+                </div>
+
+                {/* Bitcoin L1 Anchor Status Widget */}
+                <div className="hud-panel" style={{ marginTop: '1rem' }}>
+                  <h3 className="digital-font glow-amber" style={{ margin: '0 0 1rem 0', fontSize: '0.9rem', textTransform: 'uppercase', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                    <span>₿</span> Bitcoin L1 Anchor Status
+                  </h3>
+                  
+                  {anchorData && anchorData.latest_anchor ? (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                        <span className="pulse" style={{
+                          display: 'inline-block',
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          backgroundColor: '#f59e0b',
+                          boxShadow: '0 0 8px #f59e0b'
+                        }}></span>
+                        <span className="digital-font glow-amber" style={{ fontSize: '0.8rem', fontWeight: 'bold' }}>
+                          STATO: ANCORATO
+                        </span>
+                      </div>
+                      
+                      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1.2fr', gap: '0.4rem 0.2rem', fontSize: '0.8rem' }}>
+                        <div style={{ color: 'var(--text-secondary)' }}>Altezza Cosmos:</div>
+                        <div className="digital-font" style={{ color: 'var(--cyan)', fontWeight: 'bold' }}>
+                          {anchorData.latest_anchor.block_height}
+                        </div>
+                        
+                        <div style={{ color: 'var(--text-secondary)' }}>Hash Cosmos:</div>
+                        <div className="digital-font" style={{ color: 'var(--text-primary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={anchorData.latest_anchor.block_hash}>
+                          {anchorData.latest_anchor.block_hash.substring(0, 10)}...{anchorData.latest_anchor.block_hash.substring(anchorData.latest_anchor.block_hash.length - 6)}
+                        </div>
+
+                        <div style={{ color: 'var(--text-secondary)' }}>BTC TX (OP_RETURN):</div>
+                        <div className="digital-font" style={{ color: '#f59e0b', fontWeight: 'bold', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={anchorData.latest_anchor.btc_tx_hash}>
+                          <a 
+                            href={`https://mempool.space/tx/${anchorData.latest_anchor.btc_tx_hash}`} 
+                            target="_blank" 
+                            rel="noopener noreferrer"
+                            style={{ color: '#f59e0b', textDecoration: 'none' }}
+                            className="glow-amber-hover"
+                          >
+                            {anchorData.latest_anchor.btc_tx_hash.substring(0, 10)}...{anchorData.latest_anchor.btc_tx_hash.substring(anchorData.latest_anchor.btc_tx_hash.length - 6)}
+                          </a>
+                        </div>
+
+                        <div style={{ color: 'var(--text-secondary)' }}>Creatore/Signer:</div>
+                        <div className="digital-font" style={{ color: 'var(--text-primary)', textOverflow: 'ellipsis', overflow: 'hidden', whiteSpace: 'nowrap' }} title={anchorData.latest_anchor.creator}>
+                          {anchorData.latest_anchor.creator.substring(0, 10)}...{anchorData.latest_anchor.creator.substring(anchorData.latest_anchor.creator.length - 6)}
+                        </div>
+
+                        <div style={{ color: 'var(--text-secondary)' }}>Evento:</div>
+                        <div className="digital-font" style={{ color: 'var(--purple)', textTransform: 'uppercase' }}>
+                          {anchorData.latest_anchor.event_name}
+                        </div>
+
+                        <div style={{ color: 'var(--text-secondary)' }}>Timestamp:</div>
+                        <div className="digital-font" style={{ color: 'var(--text-primary)' }}>
+                          {new Date(anchorData.latest_anchor.timestamp * 1000).toLocaleString('it-IT')}
+                        </div>
+                      </div>
+                    </div>
+                  ) : (
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', fontSize: '0.85rem' }}>
+                        <span style={{
+                          display: 'inline-block',
+                          width: '8px',
+                          height: '8px',
+                          borderRadius: '50%',
+                          backgroundColor: '#6b7280'
+                        }}></span>
+                        <span className="digital-font" style={{ fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
+                          STATO: NON ANCORATO
+                        </span>
+                      </div>
+                      <div style={{ fontSize: '0.75rem', color: 'rgba(255,255,255,0.3)', textAlign: 'center', padding: '0.5rem 0' }}>
+                        In attesa della prima transazione OP_RETURN...
+                      </div>
                     </div>
                   )}
                 </div>

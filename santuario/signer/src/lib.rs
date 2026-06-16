@@ -25,6 +25,19 @@ pub mod peers;
 pub mod recovery;
 pub mod sentinel_metrics;
 
+use std::sync::Arc;
+use santuario_integrity::log::AuditLog;
+use keystore::KeyStore;
+use recovery::RecoveryContext;
+use santuario_ratchet::identity::SignerIdentityKey;
+
+pub struct SantuarioKeys {
+    pub keystore: Arc<KeyStore>,
+    pub audit_log: AuditLog,
+    pub recovery: RecoveryContext,
+    pub signer_identity: Arc<SignerIdentityKey>,
+}
+
 pub mod santuario {
     pub mod signer {
         pub mod v1 {

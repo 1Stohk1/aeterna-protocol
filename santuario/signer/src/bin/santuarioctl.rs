@@ -38,7 +38,9 @@ use tonic::transport::{Channel, Endpoint};
 
 use santuario_ratchet::{
     bip39_derive, HandshakeResponse, OperatorEndpoint, SignerIdentityPublic,
+    SignerIdentityKey,
 };
+use santuario_signer::keystore::KeyStore;
 
 pub mod santuario {
     pub mod signer {
@@ -152,6 +154,20 @@ enum Cmd {
     /// Remote log shipper tools.
     #[command(subcommand)]
     Ship(ShipCmd),
+
+    /// SSS Vault control tools.
+    #[command(subcommand)]
+    Vault(VaultCmd),
+}
+
+/// `santuarioctl vault <subcmd>`
+#[derive(Subcommand, Debug)]
+enum VaultCmd {
+    /// Submit a Shamir secret share to unseal the vault.
+    Unseal {
+        /// The share in index:hex format (e.g. "1:0a4fbc...").
+        share: String,
+    },
 }
 
 /// `santuarioctl ship <subcmd>`
@@ -200,6 +216,12 @@ enum KeyCmd {
         /// or the current directory).
         #[arg(long)]
         envelope: Option<PathBuf>,
+        /// Number of Shamir shares to generate. If set, --threshold must also be set.
+        #[arg(long)]
+        shares: Option<u8>,
+        /// Threshold K of shares required to unseal the vault.
+        #[arg(long)]
+        threshold: Option<u8>,
     },
     /// Print the active master key id (fingerprint only — never the key bytes).
     Export,
@@ -295,6 +317,27 @@ enum ChainCmd {
         /// Oracle CosmWasm contract address.
         #[arg(long, default_value = "aeterna_oracle_contract")]
         contract: String,
+    },
+    /// Sign and submit a Bitcoin anchor to the Cosmos module.
+    SubmitAnchor {
+        /// URL of the node REST endpoint.
+        #[arg(long, default_value = "http://127.0.0.1:1317")]
+        rest_url: String,
+        /// Submitter guardian address.
+        #[arg(long)]
+        address: String,
+        /// Hash of the Cosmos block (hex).
+        #[arg(long)]
+        hash: String,
+        /// Height of the Cosmos block.
+        #[arg(long)]
+        height: u64,
+        /// Bitcoin transaction hash.
+        #[arg(long)]
+        btc_tx: String,
+        /// Name of the anchoring event.
+        #[arg(long, default_value = "heartbeat")]
+        event: String,
     },
 }
 
@@ -472,6 +515,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         Cmd::Chain(sub) => handle_chain(sub, &mut client).await?,
 
         Cmd::Ship(sub) => handle_ship(sub).await?,
+
+        Cmd::Vault(sub) => handle_vault(sub, &mut client).await?,
     }
     Ok(())
 }
@@ -548,11 +593,42 @@ fn default_envelope_path() -> PathBuf {
         .join("santuario/vault/keys.envelope")
 }
 
+// --- vault subcommand --------------------------------------------------------
+
+async fn handle_vault(
+    cmd: VaultCmd,
+    client: &mut SignerClient<Channel>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    match cmd {
+        VaultCmd::Unseal { share } => {
+            let resp = client
+                .unseal(santuario::signer::v1::UnsealRequest { share_hex: share })
+                .await?
+                .into_inner();
+            if resp.unsealed {
+                println!(
+                    "vault unsealed successfully! (shares collected: {}, threshold: {})",
+                    resp.shares_collected, resp.threshold
+                );
+            } else if !resp.error.is_empty() {
+                eprintln!("unseal failed: {}", resp.error);
+                std::process::exit(1);
+            } else {
+                println!(
+                    "share accepted. (shares collected: {}/{})",
+                    resp.shares_collected, resp.threshold
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
 // --- key subcommand ----------------------------------------------------------
 
 fn handle_key(cmd: KeyCmd) -> Result<(), Box<dyn std::error::Error>> {
     match cmd {
-        KeyCmd::Import { file, envelope } => cmd_key_import(file, envelope),
+        KeyCmd::Import { file, envelope, shares, threshold } => cmd_key_import(file, envelope, shares, threshold),
         KeyCmd::Export => cmd_key_export(),
         KeyCmd::Status => cmd_key_status(),
     }
@@ -561,6 +637,8 @@ fn handle_key(cmd: KeyCmd) -> Result<(), Box<dyn std::error::Error>> {
 fn cmd_key_import(
     file: PathBuf,
     envelope: Option<PathBuf>,
+    shares: Option<u8>,
+    threshold: Option<u8>,
 ) -> Result<(), Box<dyn std::error::Error>> {
     let phrase = std::fs::read_to_string(&file)
         .map_err(|e| format!("cannot read seed file {}: {e}", file.display()))?;
@@ -599,20 +677,98 @@ fn cmd_key_import(
     if let Some(parent) = envelope_path.parent() {
         std::fs::create_dir_all(parent)?;
     }
-    let now = chrono::Utc::now().timestamp();
-    let env_json = serde_json::json!({
-        "version": 1,
-        "master_key_id": master_key_id,
-        "derivation_utc": now,
-        "last_rotation_utc": now,
-    });
-    let tmp = envelope_path.with_extension("envelope.tmp");
-    std::fs::write(&tmp, serde_json::to_string_pretty(&env_json)?)?;
-    std::fs::rename(&tmp, &envelope_path)?;
 
-    println!("Key envelope written: {}", envelope_path.display());
-    println!("master_key_id={}", master_key_id);
-    println!("Run `santuarioctl key status` to verify.");
+    if let (Some(n), Some(k)) = (shares, threshold) {
+        if k == 0 || k > n {
+            return Err("invalid shares/threshold parameters".into());
+        }
+
+        // 1. Generate master key M
+        let mut m_bytes = [0u8; 32];
+        rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut m_bytes);
+
+        // 2. Split master key M using SSS
+        let shares_vec = santuario_sss::split_secret(&m_bytes, k, n)
+            .map_err(|e| format!("Shamir split failed: {e}"))?;
+
+        // 3. Load or generate Dilithium-5 keys
+        let keys_dir = std::env::var_os("SANTUARIO_KEYS_DIR")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| {
+                let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
+                home_dir.join(".santuario").join("keys")
+            });
+        let keystore = KeyStore::load_or_generate(&keys_dir)?;
+
+        // 4. Load or generate X25519 identity key
+        let signer_identity_path = default_identity_pub_path().parent().unwrap().join("signer_identity.x25519");
+        let signer_identity = SignerIdentityKey::load_or_generate(&signer_identity_path)?;
+
+        // 5. Serialize key material into JSON
+        let key_material = serde_json::json!({
+            "dilithium_priv_hex": hex::encode(pqcrypto_traits::sign::SecretKey::as_bytes(&keystore.secret_key)),
+            "dilithium_pub_hex": hex::encode(pqcrypto_traits::sign::PublicKey::as_bytes(&keystore.public_key)),
+            "master_log_key_hex": hex::encode(keys.master_log_key),
+            "ratchet_identity_hex": hex::encode(signer_identity.to_bytes()),
+        });
+        let plaintext = serde_json::to_vec(&key_material)?;
+
+        // 6. Encrypt key material under M using AES-256-GCM
+        let vault_m = santuario_vault::MasterKey::from_bytes(m_bytes);
+        let sealed_envelope = santuario_vault::gcm_encrypt(&vault_m, &plaintext, "santuario-sss-vault-v1")
+            .map_err(|e| format!("encryption failed: {e}"))?;
+
+        // 7. Write keys.sealed
+        let sealed_json = serde_json::json!({
+            "version": 1,
+            "threshold": k,
+            "num_shares": n,
+            "envelope": sealed_envelope,
+        });
+        let sealed_path = envelope_path.parent().unwrap().join("keys.sealed");
+        std::fs::write(&sealed_path, serde_json::to_string_pretty(&sealed_json)?)?;
+        println!("Created SSS encrypted vault envelope at {}", sealed_path.display());
+
+        // 8. Delete plaintext keys from disk for security hygiene
+        let priv_path = keys_dir.join("key.priv");
+        if priv_path.exists() {
+            std::fs::remove_file(&priv_path).ok();
+        }
+        if signer_identity_path.exists() {
+            std::fs::remove_file(&signer_identity_path).ok();
+        }
+        let log_master_key_path = envelope_path.parent().unwrap().join("log_master.key");
+        if log_master_key_path.exists() {
+            std::fs::remove_file(&log_master_key_path).ok();
+        }
+
+        // 9. Display Shamir shares
+        println!("\n==================================================");
+        println!("SHAMIR SECRET SHARING (SSS) KEY REPRESENTATION");
+        println!("==================================================");
+        println!("Threshold K = {}, Total Shares N = {}", k, n);
+        println!("Save the following shares in secure, separate locations:\n");
+        for (idx, share) in shares_vec {
+            println!("Share {}: {}:{}", idx, idx, hex::encode(share));
+        }
+        println!("==================================================\n");
+
+    } else {
+        let now = chrono::Utc::now().timestamp();
+        let env_json = serde_json::json!({
+            "version": 1,
+            "master_key_id": master_key_id,
+            "derivation_utc": now,
+            "last_rotation_utc": now,
+        });
+        let tmp = envelope_path.with_extension("envelope.tmp");
+        std::fs::write(&tmp, serde_json::to_string_pretty(&env_json)?)?;
+        std::fs::rename(&tmp, &envelope_path)?;
+
+        println!("Key envelope written: {}", envelope_path.display());
+        println!("master_key_id={}", master_key_id);
+        println!("Run `santuarioctl key status` to verify.");
+    }
     Ok(())
 }
 
@@ -737,6 +893,7 @@ async fn cmd_ratchet_rehandshake(
     let hs_resp = admin
         .rehandshake(RehandshakeRequest {
             operator_eph_pub: hs_req.operator_eph_pub.to_vec(),
+            operator_kyber_pub: hs_req.operator_kyber_pub.to_vec(),
         })
         .await?
         .into_inner();
@@ -747,9 +904,17 @@ async fn cmd_ratchet_rehandshake(
         return Err("signer returned invalid ephemeral pub key length".into());
     }
     signer_eph.copy_from_slice(&hs_resp.signer_eph_pub);
+
+    let mut kyber_ct = [0u8; 1568];
+    if hs_resp.kyber_ciphertext.len() != 1568 {
+        return Err("signer returned invalid kyber ciphertext length".into());
+    }
+    kyber_ct.copy_from_slice(&hs_resp.kyber_ciphertext);
+
     let _root_key = operator_ep
         .finalize(HandshakeResponse {
             signer_eph_pub: signer_eph,
+            kyber_ciphertext: kyber_ct,
         })
         .map_err(|e| format!("handshake finalise failed: {e}"))?;
 
@@ -1045,6 +1210,66 @@ async fn handle_chain(
                 let status = resp.status();
                 let body = resp.text().await?;
                 eprintln!("Query failed: status={} body={}", status, body);
+                std::process::exit(1);
+            }
+        }
+        ChainCmd::SubmitAnchor {
+            rest_url,
+            address,
+            hash,
+            height,
+            btc_tx,
+            event,
+        } => {
+            // Construct signature payload: creator + block_hash + block_height + btc_tx_hash + event_name
+            let mut payload = Vec::new();
+            payload.extend_from_slice(address.as_bytes());
+            payload.extend_from_slice(hash.as_bytes());
+            payload.extend_from_slice(height.to_string().as_bytes());
+            payload.extend_from_slice(btc_tx.as_bytes());
+            payload.extend_from_slice(event.as_bytes());
+
+            let sign_resp = client
+                .sign(SignRequest {
+                    payload_hash: payload,
+                    agp_block_json: Vec::new(),
+                    producer_pid: None,
+                    producer_policy: None,
+                })
+                .await?
+                .into_inner();
+
+            let signature_hex = hex::encode(sign_resp.signature);
+
+            let payload_json = serde_json::json!({
+                "creator": address,
+                "block_hash": hash,
+                "block_height": height,
+                "btc_tx_hash": btc_tx,
+                "event_name": event,
+                "signature": signature_hex,
+            });
+
+            let http_client = reqwest::Client::new();
+            let resp = http_client
+                .post(&format!(
+                    "{}/aeterna/anchor/v1/submit",
+                    rest_url.trim_end_matches('/')
+                ))
+                .json(&payload_json)
+                .send()
+                .await?;
+
+            if resp.status().is_success() {
+                let json: serde_json::Value = resp.json().await?;
+                println!(
+                    "Anchor submitted successfully: {}",
+                    serde_json::to_string_pretty(&json)?
+                );
+            } else {
+                let status = resp.status();
+                let body = resp.text().await?;
+                eprintln!("Anchor submission failed: status={} body={}", status, body);
                 std::process::exit(1);
             }
         }

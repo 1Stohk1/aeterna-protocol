@@ -66,15 +66,24 @@ impl Harness {
         // v0.4 Sigillum: ephemeral master key per integration-test run.
         let audit_log = AuditLog::ephemeral(audit_log_dir.clone()).expect("ephemeral audit log");
 
+        let keystore = Arc::new(santuario_signer::keystore::KeyStore::load_or_generate(&dir.join("keys")).unwrap());
+        let recovery = santuario_signer::recovery::RecoveryContext::new_under(&dir, audit_log.clone());
+        let signer_identity = Arc::new(santuario_ratchet::SignerIdentityKey::generate());
+        let keys = Arc::new(std::sync::RwLock::new(Some(santuario_signer::SantuarioKeys {
+            keystore,
+            audit_log: audit_log.clone(),
+            recovery,
+            signer_identity,
+        })));
+
         let svc = AdminService {
             node_id: "Prometheus-test".to_string(),
             metrics: metrics.clone(),
-            audit_log: audit_log.clone(),
             peers: PeerSnapshotReader::new(peers_path.clone()),
             sentinel_metrics: SentinelMetricsReader::new(sentinel_metrics_path.clone()),
-            signer_identity: Arc::new(santuario_ratchet::SignerIdentityKey::generate()),
             ratchet_session: Arc::new(std::sync::Mutex::new(None)),
             ratchet_last_handshake_utc: Arc::new(std::sync::atomic::AtomicI64::new(0)),
+            keys,
         };
 
         // Ephemeral port — bind first to learn the address, then hand

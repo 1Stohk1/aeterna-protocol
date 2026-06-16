@@ -566,3 +566,17 @@
   border-color: #f59e0b;
   box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
 }
+
+.glow-amber {
+  text-shadow: 0 0 8px rgba(245, 158, 11, 0.4);
+  color: #f59e0b;
+}
+
+.glow-amber-hover {
+  transition: all 0.2s ease;
+}
+
+.glow-amber-hover:hover {
+  text-shadow: 0 0 10px rgba(245, 158, 11, 0.6);
+  color: #fbbf24 !important;
+}

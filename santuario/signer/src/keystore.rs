@@ -10,6 +10,15 @@ pub struct KeyStore {
 }
 
 impl KeyStore {
+    pub fn from_parts(pub_bytes: &[u8], priv_bytes: &[u8]) -> Result<Self, Box<dyn std::error::Error>> {
+        let public_key = PublicKey::from_bytes(pub_bytes)?;
+        let secret_key = SecretKey::from_bytes(priv_bytes)?;
+        Ok(Self {
+            public_key,
+            secret_key,
+        })
+    }
+
     pub fn load_or_generate(keys_dir: &Path) -> Result<Self, Box<dyn std::error::Error>> {
         if !keys_dir.exists() {
             fs::create_dir_all(keys_dir)?;

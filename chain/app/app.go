@@ -12,6 +12,8 @@ import (
 	oraclekeeper "github.com/aeterna-protocol/aeterna/chain/x/oracle/keeper"
 	"github.com/aeterna-protocol/aeterna/chain/x/trustscore"
 	trustscorekeeper "github.com/aeterna-protocol/aeterna/chain/x/trustscore/keeper"
+	"github.com/aeterna-protocol/aeterna/chain/x/anchor"
+	anchorkeeper "github.com/aeterna-protocol/aeterna/chain/x/anchor/keeper"
 )
 
 type App struct {
@@ -22,6 +24,7 @@ type App struct {
 	GuardianKeeper   guardiankeeper.Keeper
 	OracleKeeper     oraclekeeper.Keeper
 	TrustscoreKeeper trustscorekeeper.Keeper
+	AnchorKeeper     anchorkeeper.Keeper
 	ModuleManager    *module.Manager
 }
 
@@ -39,12 +42,16 @@ func NewApp(
 	tsKeeper := trustscorekeeper.NewKeeper(appCodec, storeKey)
 	tsModule := trustscore.NewAppModule(tsKeeper)
 
-	// 3. Initialize Oracle Module (injecting tsKeeper dependency)
-	oKeeper := oraclekeeper.NewKeeper(appCodec, storeKey, tsKeeper)
+	// 3. Initialize Oracle Module (injecting tsKeeper and gKeeper dependencies)
+	oKeeper := oraclekeeper.NewKeeper(appCodec, storeKey, tsKeeper, gKeeper)
 	oModule := oracle.NewAppModule(oKeeper)
 
-	// 4. Setup module manager registering all three modules
-	mm := module.NewManager(gModule, tsModule, oModule)
+	// 4. Initialize Anchor Module (injecting gKeeper dependency)
+	aKeeper := anchorkeeper.NewKeeper(appCodec, storeKey, gKeeper)
+	aModule := anchor.NewAppModule(aKeeper)
+
+	// 5. Setup module manager registering all four modules
+	mm := module.NewManager(gModule, tsModule, oModule, aModule)
 
 	return &App{
 		LegacyAmino:       legacyAmino,
@@ -53,6 +60,7 @@ func NewApp(
 		GuardianKeeper:    gKeeper,
 		OracleKeeper:      oKeeper,
 		TrustscoreKeeper:  tsKeeper,
+		AnchorKeeper:      aKeeper,
 		ModuleManager:     mm,
 	}
 }

@@ -1,5 +1,5 @@
 use pqcrypto_dilithium::dilithium5;
-use pqcrypto_traits::sign::{PublicKey as TraitPubKey, SecretKey as TraitSecKey};
+use pqcrypto_traits::sign::PublicKey as TraitPubKey;
 use std::fs;
 use std::path::PathBuf;
 

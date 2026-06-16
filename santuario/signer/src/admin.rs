@@ -24,7 +24,7 @@ use crate::sentinel_metrics::SentinelMetricsReader;
 
 use santuario_integrity::{AuditLog, AuditRecord};
 use santuario_ratchet::{
-    HandshakeRequest, Session, Side, SignerEndpoint, SignerIdentityKey,
+    HandshakeRequest, Session, Side, SignerEndpoint,
     DEFAULT_STEP_MAX_MESSAGES, DEFAULT_STEP_MAX_SECONDS,
 };
 
@@ -57,22 +57,18 @@ pub const TAIL_LIMIT_DEFAULT: u32 = 20;
 pub struct AdminService {
     pub node_id: String,
     pub metrics: Arc<MetricsRegistry>,
-    pub audit_log: AuditLog,
     pub peers: PeerSnapshotReader,
     /// v0.3.0 — the Python Sentinel publishes `aeterna_*` counters
     /// and gauges via an atomic JSON file; the Admin service merges
     /// them into its response at query time.
     pub sentinel_metrics: SentinelMetricsReader,
-    /// v0.4.0 "Sigillum" Phase C — signer's long-term X25519 identity.
-    /// Never leaves the process; the public half is served by
-    /// `GetSignerIdentity` so the operator can bootstrap handshakes.
-    pub signer_identity: Arc<SignerIdentityKey>,
     /// Per-connection ratchet session (signer side). Replaced wholesale
     /// on each `Rehandshake` call. None until first handshake completes.
     pub ratchet_session: Arc<Mutex<Option<Session>>>,
     /// UTC seconds of the most recent completed handshake. 0 = no handshake
     /// yet. AtomicI64 so reads don't need to hold the ratchet_session lock.
     pub ratchet_last_handshake_utc: Arc<AtomicI64>,
+    pub keys: Arc<std::sync::RwLock<Option<crate::SantuarioKeys>>>,
 }
 
 #[tonic::async_trait]
@@ -125,7 +121,11 @@ impl Admin for AdminService {
         if limit > TAIL_LIMIT_MAX {
             limit = TAIL_LIMIT_MAX;
         }
-        let lines = read_audit_tail(&self.audit_log, limit as usize)
+        let keys_guard = self.keys.read().unwrap();
+        let keys = keys_guard.as_ref().ok_or_else(|| {
+            Status::failed_precondition("vault sealed")
+        })?;
+        let lines = read_audit_tail(&keys.audit_log, limit as usize)
             .map_err(|e| Status::internal(format!("audit tail read failed: {e}")))?;
         Ok(Response::new(TailAuditLogResponse { lines }))
     }
@@ -164,10 +164,14 @@ impl Admin for AdminService {
         &self,
         _req: Request<GetSignerIdentityRequest>,
     ) -> Result<Response<GetSignerIdentityResponse>, Status> {
-        let pub_key = self.signer_identity.public();
+        let keys_guard = self.keys.read().unwrap();
+        let keys = keys_guard.as_ref().ok_or_else(|| {
+            Status::failed_precondition("vault sealed")
+        })?;
+        let pub_key = keys.signer_identity.public();
         Ok(Response::new(GetSignerIdentityResponse {
             identity_pub_hex: pub_key.to_hex(),
-            identity_id_hex: self.signer_identity.id_hex(),
+            identity_id_hex: keys.signer_identity.id_hex(),
         }))
     }
 
@@ -181,13 +185,26 @@ impl Admin for AdminService {
                 "operator_eph_pub must be exactly 32 bytes (X25519 public key)",
             ));
         }
+        if inner.operator_kyber_pub.len() != 1568 {
+            return Err(Status::invalid_argument(
+                "operator_kyber_pub must be exactly 1568 bytes (Kyber-1024 public key)",
+            ));
+        }
         let mut pub_bytes = [0u8; 32];
         pub_bytes.copy_from_slice(&inner.operator_eph_pub);
 
+        let mut kyber_bytes = [0u8; 1568];
+        kyber_bytes.copy_from_slice(&inner.operator_kyber_pub);
+
         let hs_req = HandshakeRequest {
             operator_eph_pub: pub_bytes,
+            operator_kyber_pub: kyber_bytes,
         };
-        let signer_ep = SignerEndpoint::new(&self.signer_identity);
+        let keys_guard = self.keys.read().unwrap();
+        let keys = keys_guard.as_ref().ok_or_else(|| {
+            Status::failed_precondition("vault sealed")
+        })?;
+        let signer_ep = SignerEndpoint::new(&keys.signer_identity);
         let (hs_resp, root_key) = signer_ep
             .accept(hs_req)
             .map_err(|e| Status::internal(format!("handshake failed: {e}")))?;
@@ -198,13 +215,10 @@ impl Admin for AdminService {
         *self.ratchet_session.lock().unwrap() = Some(session);
         self.ratchet_last_handshake_utc
             .store(santuario_integrity::now_utc(), Ordering::Relaxed);
-        // A fresh handshake also resets the per-step counter, so we
-        // count it as step 0 of the new session. The total counter
-        // only goes up on actual ratchet steps (StepRatchet), not
-        // on handshakes, to keep the metric's semantics clean.
 
         Ok(Response::new(RehandshakeResponse {
             signer_eph_pub: hs_resp.signer_eph_pub.to_vec(),
+            kyber_ciphertext: hs_resp.kyber_ciphertext.to_vec(),
         }))
     }
 
@@ -336,21 +350,29 @@ mod tests {
     use santuario_integrity::{AlertEvidence, AlertKind, IntegrityAlert};
 
     fn make_service_in(dir: &std::path::Path) -> AdminService {
+        let keys_dir = dir.join("keys");
+        let keystore = Arc::new(crate::keystore::KeyStore::load_or_generate(&keys_dir).unwrap());
+        let audit_log = AuditLog::ephemeral(dir.join("audit"))
+            .expect("ephemeral audit log construction");
+        let recovery = crate::recovery::RecoveryContext::new_under(dir, audit_log.clone());
+        let signer_identity = Arc::new(SignerIdentityKey::generate());
+        let keys = Arc::new(std::sync::RwLock::new(Some(crate::SantuarioKeys {
+            keystore,
+            audit_log,
+            recovery,
+            signer_identity,
+        })));
+
         AdminService {
             node_id: "Prometheus-test".to_string(),
             metrics: Arc::new(MetricsRegistry::default()),
-            // v0.4: AuditLog is now an encrypted segment dir, ephemeral
-            // master key per test (no persistence across runs).
-            audit_log: AuditLog::ephemeral(dir.join("audit"))
-                .expect("ephemeral audit log construction"),
             peers: PeerSnapshotReader::new(dir.join("peers.json")),
             sentinel_metrics: SentinelMetricsReader::new(
                 dir.join("sentinel_metrics.json"),
             ),
-            // Phase C: fresh ephemeral identity per test.
-            signer_identity: Arc::new(SignerIdentityKey::generate()),
             ratchet_session: Arc::new(Mutex::new(None)),
             ratchet_last_handshake_utc: Arc::new(AtomicI64::new(0)),
+            keys,
         }
     }
 
@@ -419,7 +441,9 @@ mod tests {
                     observed_sha256: "bb".repeat(32),
                 },
             };
-            svc.audit_log.log_alert(&alert).unwrap();
+            let keys_guard = svc.keys.read().unwrap();
+            let keys_val = keys_guard.as_ref().unwrap();
+            keys_val.audit_log.log_alert(&alert).unwrap();
         }
         let resp_default = svc
             .tail_audit_log(Request::new(TailAuditLogRequest { limit: 0 }))
@@ -460,13 +484,21 @@ mod tests {
                 observed_sha256: "bb".repeat(32),
             },
         };
-        svc.audit_log.log_alert(&alert).unwrap();
+        {
+            let keys_guard = svc.keys.read().unwrap();
+            let keys_val = keys_guard.as_ref().unwrap();
+            keys_val.audit_log.log_alert(&alert).unwrap();
+        }
 
         // Ground truth: read back via the public AuditLog API and
         // canonical-serialize. This path traverses the full encrypted
         // segment manager; if it diverges from the gRPC view, we have
         // a real Assioma II violation.
-        let records = svc.audit_log.tail(usize::MAX).unwrap();
+        let records = {
+            let keys_guard = svc.keys.read().unwrap();
+            let keys_val = keys_guard.as_ref().unwrap();
+            keys_val.audit_log.tail(usize::MAX).unwrap()
+        };
         assert_eq!(records.len(), 1, "exactly one record was logged");
         let expected_canonical = serde_json::to_string(&records[0]).unwrap();
 
@@ -618,6 +650,7 @@ mod tests {
         let hs_resp = svc
             .rehandshake(Request::new(RehandshakeRequest {
                 operator_eph_pub: hs_req.operator_eph_pub.to_vec(),
+                operator_kyber_pub: hs_req.operator_kyber_pub.to_vec(),
             }))
             .await
             .unwrap()
@@ -626,9 +659,12 @@ mod tests {
         // Operator finalises and builds its own session.
         let mut signer_eph_bytes = [0u8; 32];
         signer_eph_bytes.copy_from_slice(&hs_resp.signer_eph_pub);
+        let mut kyber_ct_bytes = [0u8; 1568];
+        kyber_ct_bytes.copy_from_slice(&hs_resp.kyber_ciphertext);
         let _operator_root = operator_ep
             .finalize(santuario_ratchet::HandshakeResponse {
                 signer_eph_pub: signer_eph_bytes,
+                kyber_ciphertext: kyber_ct_bytes,
             })
             .unwrap();
 
@@ -664,14 +700,20 @@ mod tests {
         let hs = svc
             .rehandshake(Request::new(RehandshakeRequest {
                 operator_eph_pub: req.operator_eph_pub.to_vec(),
+                operator_kyber_pub: req.operator_kyber_pub.to_vec(),
             }))
             .await
             .unwrap()
             .into_inner();
         let mut eph = [0u8; 32];
         eph.copy_from_slice(&hs.signer_eph_pub);
-        op.finalize(santuario_ratchet::HandshakeResponse { signer_eph_pub: eph })
-            .unwrap();
+        let mut ct = [0u8; 1568];
+        ct.copy_from_slice(&hs.kyber_ciphertext);
+        op.finalize(santuario_ratchet::HandshakeResponse {
+            signer_eph_pub: eph,
+            kyber_ciphertext: ct,
+        })
+        .unwrap();
 
         // Step once.
         let step_resp = svc

@@ -7,6 +7,7 @@ import (
 	"github.com/cosmos/cosmos-sdk/codec"
 	sdk "github.com/cosmos/cosmos-sdk/types"
 
+	guardiantypes "github.com/aeterna-protocol/aeterna/chain/x/guardian/types"
 	"github.com/aeterna-protocol/aeterna/chain/x/oracle/types"
 )
 
@@ -15,17 +16,24 @@ type TrustscoreKeeper interface {
 	RecordTaskCompletion(ctx sdk.Context, address string, success bool)
 }
 
+// GuardianKeeper defines the required interface for retrieving SBT records from the guardian module.
+type GuardianKeeper interface {
+	GetSBT(ctx sdk.Context, address string) (guardiantypes.GuardianSBT, bool)
+}
+
 type Keeper struct {
 	cdc              codec.BinaryCodec
 	storeKey         storetypes.StoreKey
 	trustscoreKeeper TrustscoreKeeper
+	guardianKeeper   GuardianKeeper
 }
 
-func NewKeeper(cdc codec.BinaryCodec, storeKey storetypes.StoreKey, tk TrustscoreKeeper) Keeper {
+func NewKeeper(cdc codec.BinaryCodec, storeKey storetypes.StoreKey, tk TrustscoreKeeper, gk GuardianKeeper) Keeper {
 	return Keeper{
 		cdc:              cdc,
 		storeKey:         storeKey,
 		trustscoreKeeper: tk,
+		guardianKeeper:   gk,
 	}
 }
 

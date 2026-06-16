@@ -67,6 +67,11 @@ impl SignerIdentityKey {
         }
     }
 
+    /// Retrieve the raw 32 bytes of the SignerIdentityKey.
+    pub fn to_bytes(&self) -> [u8; X25519_KEY_LEN] {
+        self.secret.to_bytes()
+    }
+
     /// Generate a fresh random identity from the OS CSPRNG.
     pub fn generate() -> Self {
         Self {

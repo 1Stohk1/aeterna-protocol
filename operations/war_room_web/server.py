@@ -31,6 +31,17 @@ target_override = os.environ.get("SANTUARIO_ADMIN_TARGET", "")
 obs = AdminObserver(target=target_override or None)
 client = OllamaClient(base_url="http://localhost:11434", model="llama3.2")
 
+santuario_client = None
+def get_santuario_client():
+    global santuario_client
+    if santuario_client is None:
+        try:
+            from core.santuario_client import SantuarioClient
+            santuario_client = SantuarioClient(connect_timeout_seconds=2.0, rpc_timeout_seconds=45.0)
+        except Exception as e:
+            print(f"[Api Server] Failed to connect to Santuario signer: {e}")
+    return santuario_client
+
 # Cosmos AppChain Emulator helpers
 def fetch_json(url):
     try:
@@ -52,6 +63,14 @@ def get_registered_guardians(rest_url="http://127.0.0.1:1317"):
     if res and "guardians" in res:
         return res["guardians"]
     return []
+
+def get_latest_anchor():
+    nodes = ["http://127.0.0.1:1317", "http://127.0.0.1:1318"]
+    for url in nodes:
+        res = fetch_json(f"{url}/aeterna/anchor/v1/latest")
+        if res and "latest_anchor" in res:
+            return res["latest_anchor"]
+    return None
 
 def get_shipper_status():
     shipper_enabled = False
@@ -403,18 +422,59 @@ class ApiHandler(BaseHTTPRequestHandler):
                     "signer_online": False,
                     "ready": False,
                     "sealed": True,
+                    "seccomp_active": False,
                     "node_id": "Prometheus-Offline",
                     "reason": metrics_r.reason
                 })
             else:
                 ready = metrics_r.gauges.get("santuario_signer_ready", 0.0) > 0.5
                 sealed = metrics_r.gauges.get("santuario_vault_sealed", 0.0) > 0.5
+                seccomp_active = metrics_r.gauges.get("santuario_seccomp_active", 0.0) > 0.5
                 self._write_json(200, {
                     "signer_online": True,
                     "ready": ready,
                     "sealed": sealed,
+                    "seccomp_active": seccomp_active,
                     "node_id": metrics_r.node_id
                 })
+
+        elif self.path == "/api/benchmark":
+            client_grpc = get_santuario_client()
+            if client_grpc is None:
+                self._write_json(200, {
+                    "status": "simulated",
+                    "info": "Signer offline, using UI simulation only"
+                })
+                return
+            
+            import threading
+            task_req = {
+                "id_task": f"bench-{int(time.time())}",
+                "tipo_analisi": "tumor_growth_gompertz",
+                "parametri": {
+                    "N0": 1.0e6,
+                    "rho": 0.01,
+                    "K": 1.0e11,
+                    "sigma": 0.02,
+                    "days": 5
+                },
+                "reproducibility": {
+                    "seed_rng": 123456,
+                    "julia_version_expected": "1.10",
+                    "package_manifest_hash": "benchmark-run"
+                }
+            }
+            def run_bench():
+                try:
+                    client_grpc.execute_task(json.dumps(task_req), "julia")
+                except Exception as e:
+                    print(f"[Api Server] Benchmark execution error: {e}")
+            
+            threading.Thread(target=run_bench, daemon=True).start()
+            self._write_json(200, {
+                "status": "triggered",
+                "id_task": task_req["id_task"]
+            })
 
         elif self.path == "/api/metrics":
             metrics_r = obs.get_metrics()
@@ -472,7 +532,9 @@ class ApiHandler(BaseHTTPRequestHandler):
             try:
                 nodes = ["http://127.0.0.1:1317", "http://127.0.0.1:1318"]
                 seen_tasks = set()
+                seen_anchors = set()
                 for base_url in nodes:
+                    # Query proofs
                     proof_res = fetch_json(f"{base_url}/aeterna/oracle/v1/proof")
                     if proof_res and "proofs" in proof_res:
                         for p in proof_res["proofs"]:
@@ -498,6 +560,25 @@ class ApiHandler(BaseHTTPRequestHandler):
                                 "record": record,
                                 "json": json.dumps(p)
                             })
+
+                    # Query anchors
+                    anchor_res = fetch_json(f"{base_url}/aeterna/anchor/v1/latest")
+                    if anchor_res and "latest_anchor" in anchor_res and anchor_res["latest_anchor"]:
+                        anc = anchor_res["latest_anchor"]
+                        btc_tx = anc.get("btc_tx_hash")
+                        if btc_tx and btc_tx not in seen_anchors:
+                            seen_anchors.add(btc_tx)
+                            height = anc.get("block_height", 0)
+                            creator = anc.get("creator", "")
+                            event = anc.get("event_name", "")
+                            ts = anc.get("timestamp", int(time.time()))
+                            
+                            record = f"[BITCOIN] Height {height} anchored | OP_RETURN: {btc_tx[:24]}... by {creator[:12]}... ({event})"
+                            blockchain_lines.append({
+                                "ts_utc": ts,
+                                "record": record,
+                                "json": json.dumps(anc)
+                            })
             except Exception:
                 pass
 
@@ -521,6 +602,13 @@ class ApiHandler(BaseHTTPRequestHandler):
 
         elif self.path == "/api/chain":
             self._write_json(200, get_chain_status())
+
+        elif self.path == "/api/anchor/latest":
+            anchor = get_latest_anchor()
+            self._write_json(200, {
+                "latest_anchor": anchor,
+                "connected": anchor is not None
+            })
 
         elif self.path.startswith("/api/sanctuary/status"):
             import urllib.parse

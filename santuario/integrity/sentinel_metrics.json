@@ -1,1 +1,1 @@
-{"counters":{"aeterna_block_tx_total":881,"aeterna_peer_announce_tx_total":126,"aeterna_task_harvested_total":934},"gauges":{"aeterna_last_announce_age_seconds":15.696924448013306,"aeterna_poc_queue_depth":0.0,"aeterna_task_queue_depth":0.0},"snapshot_utc":1781520163}
+{"counters":{"aeterna_peer_announce_tx_total":104,"aeterna_task_harvested_total":1017},"gauges":{"aeterna_last_announce_age_seconds":15.664162158966064,"aeterna_poc_queue_depth":0.0,"aeterna_task_queue_depth":0.0},"snapshot_utc":1781597911}

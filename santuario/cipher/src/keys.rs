@@ -70,6 +70,11 @@ impl MasterLogKey {
         Self { bytes }
     }
 
+    /// Retrieve the raw 32 bytes of the MasterLogKey.
+    pub fn to_bytes(&self) -> [u8; 32] {
+        self.bytes
+    }
+
     /// Generate a fresh random master key from the OS CSPRNG.
     /// Production callers should prefer `load_or_generate` so the key
     /// is persisted; this constructor exists for tests and for

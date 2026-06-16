@@ -14,6 +14,7 @@ santuario-vault     = { path = "../vault" }
 santuario-critic    = { path = "../critic" }
 santuario-integrity = { path = "../integrity" }
 santuario-isolation = { path = "../isolation" }
+santuario-sss       = { path = "../sss" }
 # v0.4 "Sigillum": transitively reachable via santuario-integrity, but
 # imported directly so main.rs can call MasterLogKey::load_or_generate
 # without leaning on a re-export.

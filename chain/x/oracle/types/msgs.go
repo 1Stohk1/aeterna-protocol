@@ -18,6 +18,7 @@ type MsgSubmitProof struct {
 	ObsHash         string `json:"obs_hash"`
 	Proof           []byte `json:"proof"`
 	IpfsCid         string `json:"ipfs_cid,omitempty"`
+	Signature       []byte `json:"signature"`
 }
 
 func NewMsgSubmitProof(
@@ -26,6 +27,7 @@ func NewMsgSubmitProof(
 	refHash, obsHash string,
 	proof []byte,
 	ipfsCid string,
+	signature []byte,
 ) *MsgSubmitProof {
 	return &MsgSubmitProof{
 		Creator:         creator,
@@ -37,6 +39,7 @@ func NewMsgSubmitProof(
 		ObsHash:         obsHash,
 		Proof:           proof,
 		IpfsCid:         ipfsCid,
+		Signature:       signature,
 	}
 }
 
@@ -68,6 +71,9 @@ func (msg *MsgSubmitProof) ValidateBasic() error {
 	// Compressed Groth16 proof on BN254 must be exactly 128 bytes
 	if len(msg.Proof) != 128 {
 		return sdkerrors.ErrInvalidRequest.Wrapf("invalid zk-SNARK proof size: expected exactly 128 bytes, got %d", len(msg.Proof))
+	}
+	if len(msg.Signature) == 0 {
+		return sdkerrors.ErrInvalidRequest.Wrap("signature cannot be empty")
 	}
 	return nil
 }

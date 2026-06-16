@@ -41,6 +41,20 @@ service Signer {
 
     // Execute a scientific task in a sandboxed container.
     rpc ExecuteTask (ExecuteTaskRequest) returns (ExecuteTaskResponse);
+
+    // Unseal the vault by submitting a Shamir secret sharing share.
+    rpc Unseal (UnsealRequest) returns (UnsealResponse);
+}
+
+message UnsealRequest {
+    string share_hex = 1;
+}
+
+message UnsealResponse {
+    bool unsealed = 1;
+    uint32 shares_collected = 2;
+    uint32 threshold = 3;
+    string error = 4;
 }
 
 message ExecuteTaskRequest {
