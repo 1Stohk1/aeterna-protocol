@@ -63,6 +63,18 @@ pub enum AuditRecord {
         operator: String,
         n_entries: usize,
     },
+    /// A scientific workload container/process has started.
+    WorkloadStart {
+        ts_utc: i64,
+        pid: i32,
+        policy: String,
+    },
+    /// A scientific workload container/process has stopped.
+    WorkloadStop {
+        ts_utc: i64,
+        pid: i32,
+        status: String,
+    },
 }
 
 /// Encrypted append-only audit log backed by Sigillum-v1 segments.

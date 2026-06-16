@@ -1,40 +1,32 @@
 use pqcrypto_dilithium::dilithium5;
-use pqcrypto_traits::sign::{PublicKey as TraitPubKey, SecretKey as TraitSecKey};
+use pqcrypto_traits::sign::PublicKey as TraitPubKey;
 use std::fs;
 use std::path::PathBuf;
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    println!("Generating new Dilithium-5 keypair...");
+    println!("Generating new Dilithium-5 keypair for operator...");
     let (public_key, secret_key) = dilithium5::keypair();
 
-    let keys_dir = std::env::var_os("SANTUARIO_KEYS_DIR")
-        .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            let home_dir = dirs::home_dir().unwrap_or_else(|| PathBuf::from("."));
-            home_dir.join(".santuario").join("keys")
-        });
-
-    if !keys_dir.exists() {
-        fs::create_dir_all(&keys_dir)?;
+    // Write public key to the expected operator public key path
+    let operator_pk_path = PathBuf::from("santuario/integrity/operator.pk");
+    if let Some(parent) = operator_pk_path.parent() {
+        fs::create_dir_all(parent)?;
     }
+    fs::write(&operator_pk_path, public_key.as_bytes())?;
+    println!("Saved operator public key to {:?}", operator_pk_path);
 
-    let pub_path = keys_dir.join("key.pub");
-    let priv_path = keys_dir.join("key.priv");
-
-    fs::write(&pub_path, public_key.as_bytes())?;
-    fs::write(&priv_path, secret_key.as_bytes())?;
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut perms = fs::metadata(&priv_path)?.permissions();
-        perms.set_mode(0o600);
-        fs::set_permissions(&priv_path, perms)?;
+    // Read the recovery challenge
+    let challenge_path = PathBuf::from("santuario/integrity/recovery_challenge.hex");
+    if !challenge_path.exists() {
+        return Err("santuario/integrity/recovery_challenge.hex not found".into());
     }
+    let challenge_hex = fs::read_to_string(&challenge_path)?;
+    let challenge_bytes = hex::decode(challenge_hex.trim())?;
 
-    println!("Keys saved to {:?}", keys_dir);
-    println!("Public key length: {} bytes", public_key.as_bytes().len());
-    println!("Secret key length: {} bytes", secret_key.as_bytes().len());
+    // Sign the challenge using Dilithium-5
+    let signed_msg = dilithium5::sign(&challenge_bytes, &secret_key);
+    let token_hex = hex::encode(pqcrypto_traits::sign::SignedMessage::as_bytes(&signed_msg));
 
+    println!("TOKEN: {}", token_hex);
     Ok(())
 }

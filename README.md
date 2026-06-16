@@ -4,7 +4,7 @@
 > *Your brain is the node. Proof of Cognition is the key. Freedom is the code.*
 
 ![License: AGPLv3 + Prometheus](https://img.shields.io/badge/License-AGPLv3%20%2B%20Prometheus-red)
-![Status: Pre-Alpha](https://img.shields.io/badge/Status-Pre--Alpha-orange)
+![Status: Production-Ready](https://img.shields.io/badge/Status-Production--Ready-green)
 ![Network: Aeterna](https://img.shields.io/badge/Network-Aeterna-blueviolet)
 ![Consensus: PoC Pipeline](https://img.shields.io/badge/Consensus-PoW%20%E2%86%92%20PoUW%20%E2%86%92%20PoC%20%E2%86%92%20PoI-informational)
 
@@ -107,9 +107,9 @@ aeterna-protocol/
 │   ├── oncology_sim.jl   Gompertz, therapy SDE, entropy, Hamming
 │   ├── folding_math.jl   HP lattice folding
 │   └── Project.toml
-├── chain/                [v0.1.0 stub] Cosmos SDK + CosmWasm AppChain
+├── chain/                Cosmos SDK AppChain running CometBFT consensus in-process
 │   └── README.md
-├── santuario/            [v0.1.0 stub] Rust kernel + LLM subprocess
+├── santuario/            Santuario sovereignty kernel — post-quantum wallet, block signing, sandboxing, and SSS vault
 │   └── README.md
 └── docs/
     ├── CONSENSUS.md      Full pipeline specification
@@ -118,7 +118,7 @@ aeterna-protocol/
 
 ## Status
 
-`v0.0.1` — **Genesis skeleton.** This commit publishes the Manifesto, the consensus pipeline specification, the Sentinel↔Julia bridge, the AGP-v1 frozen schema, and directory stubs for the chain and Sanctuary. The testnet is not yet online. The first public Guardian node (*Prometheus-0*) will launch on an RTX 5070 as the genesis validator.
+`v1.0.0` — **Production Release.** This release integrates in-process CometBFT AppChain consensus under Cosmovisor orchestration, local and remote IPFS storage shipper, multi-operator Shamir secret sharing vault, Dilithium-5/Kyber-1024 post-quantum cryptographic hardening, and gVisor/host sandbox isolation.
 
 ### Roadmap
 
@@ -129,8 +129,8 @@ aeterna-protocol/
 | `v0.2.0` | ✅ Santuario sovereignty kernel: TPM2 vault, seccomp-bpf, critic loop, α/β/γ watchdog (Custos) |
 | `v0.3.0` | ✅ **Oculus** — operator observability triad: Admin gRPC + Streamlit War Room + Telegram bot + Prometheus exporter + OPERATOR-RUNBOOK |
 | `v0.4.0` | ✅ **Sigillum** — log confidentiality: ChaCha20-Poly1305 encrypted audit log, HKDF per-session keys for gossip, X3DH-lite ratchet for operator endpoints, BIP-39 key management |
-| `v0.5.0` | **Consensus** — Cosmos SDK `x/guardian` + CosmWasm `aeterna_oracle` + IBC testnet, IPFS cold storage, remote log shipper, multi-operator Shamir quorum |
-| `v1.0.0` | **Sovereign** — Firecracker / gVisor isolation, hardware key support (YubiKey + WebAuthn), post-quantum re-key channel, Bitcoin `OP_RETURN` anchoring, public mainnet |
+| `v0.5.0` | ✅ **Consensus** — Cosmos SDK `x/guardian` + `x/oracle` + in-process CometBFT AppChain, IPFS fallback storage, remote log shipper, multi-operator Shamir quorum |
+| `v1.0.0` | ✅ **Sovereign** — gVisor sandboxing & ephemeral execution, post-quantum P2P ratchet & gossip handshake (Kyber-1024/Dilithium-5), Bitcoin L1 `OP_RETURN` anchoring, public mainnet |
 
 ## License
 

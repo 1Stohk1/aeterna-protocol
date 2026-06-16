@@ -25,6 +25,9 @@ pub mod policy;
 #[cfg(target_os = "linux")]
 pub mod launcher;
 
+#[cfg(target_os = "linux")]
+pub mod gvisor;
+
 #[cfg(not(target_os = "linux"))]
 pub mod launcher_stub;
 

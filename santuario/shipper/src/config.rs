@@ -105,11 +105,15 @@ impl ShipperConfig {
             ));
         }
         if !self.endpoint_url.starts_with("https://") {
-            return Err(Error::Config(format!(
-                "endpoint_url must be https:// (got {}). Sigillum forbids \
-                 plaintext shipper transport.",
-                self.endpoint_url
-            )));
+            let is_loopback = self.endpoint_url.starts_with("http://127.0.0.1")
+                || self.endpoint_url.starts_with("http://localhost");
+            if !is_loopback {
+                return Err(Error::Config(format!(
+                    "endpoint_url must be https:// (got {}). Sigillum forbids \
+                     plaintext shipper transport.",
+                    self.endpoint_url
+                )));
+            }
         }
         if self.endpoint_pin_sha256.len() != CERT_PIN_HEX_LEN {
             return Err(Error::InvalidCertPin(format!(

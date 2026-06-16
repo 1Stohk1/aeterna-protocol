@@ -376,9 +376,19 @@ class Sentinel:
         assert self._public_key is not None
 
         payload_hash_hex = payload["security"]["payload_hash"]
-        signature = self._santuario.sign(bytes.fromhex(payload_hash_hex))
+        agp_block_json = json.dumps(payload).encode("utf-8")
+        pid = getattr(self, "_current_task_pid", None)
+        policy = "julia" if pid is not None else None
+
+        signature = self._santuario.sign(
+            bytes.fromhex(payload_hash_hex),
+            agp_block_json=agp_block_json,
+            producer_pid=pid,
+            producer_policy=policy
+        )
         payload["security"]["signature"] = signature.hex()
         payload["security"]["public_key"] = self._public_key.hex()
+        self._current_task_pid = None
 
     def _broadcast_announce(self) -> None:
         if not self._santuario or not self._gossip:
@@ -406,7 +416,6 @@ class Sentinel:
         }
 
     def dispatch_task(self, task: dict[str, Any]) -> dict[str, Any]:
-        assert self._zmq is not None
         # Canonical seed source = Sentinel. Imposes determinism on Julia.
         seed = secrets.randbits(63)
         request = {
@@ -419,21 +428,34 @@ class Sentinel:
                 "package_manifest_hash": self._package_manifest_hash,
             },
         }
-        LOG.info("→ Julia: %s (task=%s seed=%d)",
+        LOG.info("→ Julia (sandboxed): %s (task=%s seed=%d)",
                  task["tipo_analisi"], task["id_task"][:16], seed)
-        self._zmq.send_json(request)
-        reply: dict[str, Any] = self._zmq.recv_json()  # type: ignore[assignment]
+
+        if self._santuario is None:
+            raise RuntimeError("Santuario signer client is not initialized")
+
+        task_json = json.dumps(request)
+        result_json, pid = self._santuario.execute_task(task_json, "julia")
+
+        reply = json.loads(result_json)
         if reply.get("status") != "ok":
             raise RuntimeError(f"Julia engine error: {reply.get('error')}")
+
+        self._current_task_pid = pid
         return reply
 
     def _execute_poc_request(self, request: dict[str, Any]) -> dict[str, Any]:
-        assert self._zmq is not None
-        LOG.info("PoC replay -> Julia: %s (task=%s seed=%s)",
+        LOG.info("PoC replay -> Julia (sandboxed): %s (task=%s seed=%s)",
                  request["tipo_analisi"], request["id_task"][:16],
                  request["reproducibility"].get("seed_rng"))
-        self._zmq.send_json(request)
-        return self._zmq.recv_json()  # type: ignore[return-value]
+
+        if self._santuario is None:
+            raise RuntimeError("Santuario signer client is not initialized")
+
+        task_json = json.dumps(request)
+        result_json, _pid = self._santuario.execute_task(task_json, "julia")
+
+        return json.loads(result_json)
 
     def _process_next_poc_validation(self) -> None:
         if not self._poc_queue or not self._santuario or not self._gossip:

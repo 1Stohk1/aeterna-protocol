@@ -1,0 +1,19 @@
+[package]
+name        = "santuario-sss"
+description = "v0.6.0 Probatio Level 2 Shamir's Secret Sharing (SSS) byte-oriented implementation for BIP-39 secrets."
+version.workspace      = true
+edition.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[dependencies]
+rand = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+thiserror = { workspace = true }
+
+[dev-dependencies]
+hex = { workspace = true }

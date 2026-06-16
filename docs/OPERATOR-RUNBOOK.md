@@ -68,6 +68,13 @@ santuarioctl key status
 
 # 7. Ratchet session is established (phase C)
 santuarioctl ratchet status
+
+# v0.5 Consensus additions
+# 8. Cosmos AppChain node status check
+santuarioctl chain status
+
+# 9. Remote log shipper status check
+santuarioctl ship status
 ```
 
 If any fails: see **section 9 -- node-health issues** before proceeding.
@@ -102,6 +109,8 @@ Each alert below follows this template, in order:
 | recovery_token_issued | informational | none -- this is itself a recovery action | distribute token securely |
 | key_rotation_due | manual (v0.4 Sigillum) | none | within 24 hours of notice |
 | ratchet_desync | 3 consecutive AuthFailed on the gRPC channel | refuses ratchet encrypt/decrypt | within 1 hour |
+| chain_disconnected | Cosmos AppChain REST endpoint unreachable > 10 min | none | within 2 hours |
+| shipper_push_failed | 3 consecutive push failures on same segment | marks segment as failed, alert | within 24 hours |
 
 ### The four mental questions
 
@@ -901,7 +910,77 @@ File a postmortem within 24 hours using the template in §11. Include:
 
 ---
 
-## 14. Closing principle
+## 14. Chain operator basics (v0.5.0 Consensus)
+
+> **Signal → Diagnosis → Recovery → SLO**
+
+### Bringing up the Devnet
+To launch the 2-validator Devnet locally, pass the `-ChainEnabled` flag to the bootstrap script:
+```powershell
+.\bootstrap.ps1 -ChainEnabled
+```
+This initializes home directories for Node 1 and Node 2 validation processes, copies the custom genesis file with pre-minted SBTs, and brings up the nodes on separate ports (Node 1: RPC 26657 / REST 1317; Node 2: RPC 26658 / REST 1318).
+
+### Minting Guardian SBT
+To associate the local node's Dilithium identity with a guardian status, you must mint an Identity SBT on the AppChain:
+```powershell
+santuarioctl chain register --address <guardian-cosmos-address>
+```
+
+### Joining as a Validator
+Once registered, the node will participate in agreement protocols. You can verify its registration status by running:
+```powershell
+santuarioctl chain status --rest-url http://127.0.0.1:1317
+```
+
+### Submitting blocks & Reading Trust Score
+Every validated AGP block is submitted to the oracle contract CosmWasm instance. Run the following command to manually submit a block:
+```powershell
+santuarioctl chain submit-block --address <guardian-address> --hash <block-hash> --height <block-height>
+```
+To read your node's current Trust Score (TS) calculated by the oracle contract:
+```powershell
+santuarioctl chain trust-score --address <guardian-address>
+```
+
+---
+
+## 15. Remote log shipper (v0.5.0 Consensus)
+
+> **Signal → Diagnosis → Recovery → SLO**
+
+### Configuring the Remote Endpoint
+To configure the shipper, you must provide the destination HTTPS endpoint URL and the SHA-256 fingerprint pin of the leaf certificate:
+```powershell
+santuarioctl ship deploy --url https://archive.example.com/segments --pin <cert-pin-sha256-hex>
+```
+This command adds/updates the `[shipper]` section in your `aeterna.toml`. Once configured, the companion thread in the signer starts shipping encrypted `.sigillum` segments automatically.
+
+### Verifying a pushed segment
+To verify that a specific segment has been successfully and durably persisted on-host:
+```powershell
+santuarioctl ship verify <segment_id>
+```
+This queries the remote endpoint for the segment, downloads it, and asserts that its SHA-256 hash matches the local segment's hash exactly.
+
+### Recovering from push backlog
+If the remote endpoint experiences downtime, the shipper will queue unsent segments and back off. You can trigger an immediate manual flush to push the backlog once the endpoint is online:
+```powershell
+santuarioctl ship deploy
+```
+
+### Rotating cert pins on cert renewal
+When the remote server rotates its TLS certificates, the cert pin will drift, triggering a hard stop on the shipper thread. To rotate the cert pin:
+1. Verify the new certificate out-of-band.
+2. Update the pin in `aeterna.toml` via `santuarioctl ship deploy`:
+```powershell
+santuarioctl ship deploy --url https://archive.example.com/segments --pin <new-cert-pin-sha256-hex>
+```
+3. Restart the signer process to apply the configuration change.
+
+---
+
+## 16. Closing principle
 
 This runbook is the operator-facing closure of sprint v0.3.0 "Oculus"
 extended to sprint v0.4.0 "Sigillum".

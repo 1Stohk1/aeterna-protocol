@@ -29,6 +29,13 @@ walkdir     = { workspace = true }
 
 # Hex (cert pin formatting in error messages + tests).
 hex         = { workspace = true }
+tokio       = { workspace = true }
+reqwest     = { workspace = true }
+rustls      = { workspace = true }
+sha2        = { workspace = true }
+chrono      = { workspace = true }
+santuario-ratchet = { path = "../ratchet" }
+
 
 [dev-dependencies]
 tempfile    = { workspace = true }

@@ -45,7 +45,7 @@ cpu_stress_window_min    = 10
 enable_smart_heating     = true
 
 [sentinel]
-sentinel_version         = "0.2.0"
+sentinel_version         = "1.0.0"
 bind_host                = "0.0.0.0"
 heartbeat_sec            = 30
 pow_difficulty           = 4

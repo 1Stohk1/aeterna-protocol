@@ -171,11 +171,15 @@ message GetSignerIdentityResponse {
 message RehandshakeRequest {
     // Operator's single-use ephemeral X25519 public key (32 bytes).
     bytes operator_eph_pub = 1;
+    // Operator's single-use ephemeral Kyber-1024 public key (1568 bytes).
+    bytes operator_kyber_pub = 2;
 }
 
 message RehandshakeResponse {
     // Signer's single-use ephemeral X25519 public key (32 bytes).
     bytes signer_eph_pub = 1;
+    // Kyber-1024 ciphertext (1568 bytes) encapsulating the shared secret.
+    bytes kyber_ciphertext = 2;
 }
 
 // --- StepRatchet (v0.4.0 Sigillum Phase C) ----------------------------------

@@ -1,0 +1,29 @@
+syntax = "proto3";
+package aeterna.guardian.v1;
+
+import "google/api/annotations.proto";
+import "gogoproto/gogo.proto";
+
+option go_package = "github.com/aeterna-protocol/aeterna/chain/x/guardian/types";
+
+service Query {
+  // GuardianSBT queries the SBT registration details for a specific address.
+  rpc GuardianSBT(QueryGuardianSBTRequest) returns (QueryGuardianSBTResponse) {
+    option (google.api.http) = {
+      get: "/aeterna/guardian/v1/sbt/{address}"
+    };
+  }
+}
+
+message QueryGuardianSBTRequest {
+  string address = 1;
+}
+
+message QueryGuardianSBTResponse {
+  string sbt_id                = 1;
+  string owner                 = 2;
+  bytes  dilithium_pubkey      = 3;
+  string manifesto_hash        = 4;
+  uint32 trust_tier            = 5;
+  int64  registration_height   = 6;
+}

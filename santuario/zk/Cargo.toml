@@ -1,0 +1,31 @@
+[package]
+name        = "santuario-zk"
+description = "v0.6.0 Probatio Level 2 Proof of Cognition zk-SNARK circuits using arkworks."
+version.workspace      = true
+edition.workspace      = true
+authors.workspace      = true
+license.workspace      = true
+repository.workspace   = true
+rust-version.workspace = true
+
+[dependencies]
+# ZK Proving and Constraint System
+ark-ff         = "0.4.0"
+ark-relations  = "0.4.0"
+ark-r1cs-std   = "0.4.0"
+ark-groth16    = "0.4.0"
+ark-bn254      = "0.4.0"
+ark-snark      = "0.4.0"
+ark-serialize  = "0.4.0"
+ark-std        = { version = "0.4.0", features = ["std"] }
+
+# Serialization and Utilities
+serde      = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+hex        = { workspace = true }
+anyhow     = { workspace = true }
+log        = { workspace = true }
+
+[dev-dependencies]
+# For testing
+rand = { workspace = true }

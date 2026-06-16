@@ -81,6 +81,10 @@ pub enum Error {
     #[error("bip39 mnemonic invalid: {0}")]
     Bip39(String),
 
+    /// Kyber-1024 cryptographic or deserialization error.
+    #[error("kyber-1024 error: {0}")]
+    Kyber(String),
+
     /// Internal invariant violation. Indicates a bug in this crate;
     /// caller should HALT immediately.
     #[error("internal Sigillum-ratchet invariant violated: {0}")]

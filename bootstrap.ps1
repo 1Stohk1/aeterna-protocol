@@ -154,7 +154,10 @@ param(
     # v0.4 Sigillum: optional path to the BIP-39 seed file. When provided,
     # the signer reads this file to derive its master log key + ratchet
     # identity instead of using the ephemeral random-on-first-boot key.
-    [string]   $SeedFile            = ""
+    [string]   $SeedFile            = "",
+    # v0.5.0: AppChain and Shipper configuration
+    [switch]   $ChainEnabled,
+    [string]   $ShipperEndpoint     = ""
 )
 
 $ErrorActionPreference = "Stop"
@@ -183,6 +186,8 @@ $Banner = @"
     skip signer/julia/exporter/sentinel : $($SkipSigner.IsPresent) / $($SkipJulia.IsPresent) / $($SkipExporter.IsPresent) / $($SkipSentinel.IsPresent)
     encrypted_log       : $EncryptedLogStatus
     ratchet             : $RatchetStatus
+    chain_enabled       : $($ChainEnabled.IsPresent)
+    shipper_endpoint    : $(if ($ShipperEndpoint -eq "") { "none (read from aeterna.toml)" } else { $ShipperEndpoint })
 "@
 Write-Host $Banner -ForegroundColor Cyan
 
@@ -397,6 +402,43 @@ $env:AETERNA_EXPORTER_BIND = "127.0.0.1:$ExporterPort"
 # MAIN -- try/finally guarantees teardown even on Ctrl-C or thrown exception.
 # ---------------------------------------------------------------------------
 try {
+    # ------ 0. AppChain Devnet nodes (Phase F) ---------------------------
+    if ($ChainEnabled) {
+        Write-Host "[0/4] Initializing and launching aeternad nodes..." -ForegroundColor Cyan
+        $UserDir = [System.Environment]::GetFolderPath('UserProfile')
+        $Home1 = Join-Path $UserDir ".aeternad_prometheus-1"
+        $Home2 = Join-Path $UserDir ".aeternad_prometheus-2"
+
+        # Clean old state
+        if (Test-Path $Home1) { Remove-Item -Recurse -Force $Home1 }
+        if (Test-Path $Home2) { Remove-Item -Recurse -Force $Home2 }
+
+        $BinaryPath = Join-Path $RepoRoot "chain\aeternad.exe"
+        if (!(Test-Path $BinaryPath)) {
+            Write-Host "aeternad.exe not found in chain directory. Building..." -ForegroundColor Yellow
+            Push-Location (Join-Path $RepoRoot "chain")
+            & "go" build -o aeternad.exe ./cmd/aeternad/
+            Pop-Location
+        }
+
+        & $BinaryPath init --moniker prometheus-1 --home $Home1 | Out-Null
+        & $BinaryPath init --moniker prometheus-2 --home $Home2 | Out-Null
+
+        Copy-Item (Join-Path $RepoRoot "chain\scripts\genesis.json") (Join-Path $Home1 "config\genesis.json") -Force
+        Copy-Item (Join-Path $RepoRoot "chain\scripts\genesis.json") (Join-Path $Home2 "config\genesis.json") -Force
+
+        Start-Child -Label "aeternad-node-1" `
+                    -FilePath $BinaryPath `
+                    -ArgumentList @("start", "--rpc-addr", "127.0.0.1:26657", "--rest-addr", "127.0.0.1:1317", "--moniker", "prometheus-1", "--home", $Home1) | Out-Null
+
+        Start-Child -Label "aeternad-node-2" `
+                    -FilePath $BinaryPath `
+                    -ArgumentList @("start", "--rpc-addr", "127.0.0.1:26658", "--rest-addr", "127.0.0.1:1318", "--moniker", "prometheus-2", "--home", $Home2) | Out-Null
+
+        Wait-TcpReady -Port 26657 -TimeoutSec 30 -Label "aeternad-node-1"
+        Wait-TcpReady -Port 26658 -TimeoutSec 30 -Label "aeternad-node-2"
+    }
+
     # ------ 1. Santuario signer ------------------------------------------
     # Two-phase: cargo BUILD synchronously (blocks until artifact is on disk),
     # then spawn the produced .exe directly via Start-Child. This replaces the
@@ -441,6 +483,10 @@ try {
             $signerExtraEnv["AETERNA_SEED_FILE"] = (Resolve-Path $SeedFile).Path
             Write-Host "    Sigillum seed file: $((Resolve-Path $SeedFile).Path)" -ForegroundColor DarkCyan
         }
+        if ($ShipperEndpoint -ne "") {
+            $signerExtraEnv["AETERNA_SHIPPER_ENDPOINT"] = $ShipperEndpoint
+            Write-Host "    Shipper endpoint: $ShipperEndpoint" -ForegroundColor DarkCyan
+        }
         Start-Child -Label "santuario-signer" `
                     -FilePath $signerExe `
                     -ArgumentList @() `
@@ -452,16 +498,29 @@ try {
     }
 
     # ------ 2. Julia scientific engine -----------------------------------
-    if (-not $SkipJulia) {
-        Write-Host "[2/4] Launching scientific engine (Julia, ZMQ) ..." -ForegroundColor Cyan
-        Start-Child -Label "scientific-engine" `
-                    -FilePath "julia" `
-                    -ArgumentList @("--project=scientific", "scientific\zmq_server.jl") `
-                    -ExtraEnv @{ AETERNA_ZMQ_ENDPOINT = "tcp://*:$ZmqPort" } | Out-Null
-        Wait-TcpReady -Port $ZmqPort -TimeoutSec $ZmqReadyTimeoutSec `
-                      -Label "scientific-engine"
+    $aeternaTomlPath = Join-Path $RepoRoot "aeterna.toml"
+    $isGvisor = $false
+    if (Test-Path $aeternaTomlPath) {
+        $tomlContent = Get-Content -Raw $aeternaTomlPath
+        if ($tomlContent -match 'isolation_mode\s*=\s*"gvisor"') {
+            $isGvisor = $true
+        }
+    }
+
+    if ($isGvisor) {
+        Write-Host "[2/4] isolation_mode=gvisor detected: Julia tasks will be launched dynamically on-demand by the Santuario Signer." -ForegroundColor Cyan
     } else {
-        Write-Host "[2/4] -SkipJulia: assuming engine already running on :$ZmqPort" -ForegroundColor DarkYellow
+        if (-not $SkipJulia) {
+            Write-Host "[2/4] Launching scientific engine (Julia, ZMQ) ..." -ForegroundColor Cyan
+            Start-Child -Label "scientific-engine" `
+                        -FilePath "julia" `
+                        -ArgumentList @("--project=scientific", "scientific\zmq_server.jl") `
+                        -ExtraEnv @{ AETERNA_ZMQ_ENDPOINT = "tcp://*:$ZmqPort" } | Out-Null
+            Wait-TcpReady -Port $ZmqPort -TimeoutSec $ZmqReadyTimeoutSec `
+                          -Label "scientific-engine"
+        } else {
+            Write-Host "[2/4] -SkipJulia: assuming engine already running on :$ZmqPort" -ForegroundColor DarkYellow
+        }
     }
 
     # ------ 3. Santuario exporter (Prometheus HTTP) ----------------------
@@ -511,8 +570,68 @@ try {
         Write-Host "[3/4] -SkipExporter: Prometheus surface disabled." -ForegroundColor DarkYellow
     }
 
+    function Get-StatusBanner {
+        $chainBanner = "chain: disconnected"
+        if ($ChainEnabled) {
+            try {
+                $resp = Invoke-RestMethod -Uri "http://127.0.0.1:1317/status" -TimeoutSec 2 -ErrorAction Stop
+                $h = $resp.result.sync_info.latest_block_height
+                $chainBanner = "chain: connected (h=$h)"
+            } catch {
+                $chainBanner = "chain: disconnected"
+            }
+        } else {
+            $chainBanner = "chain: disabled"
+        }
+
+        $shipperBanner = "shipper: idle"
+        $auditDir = Join-Path $RepoRoot "logs/audit"
+        $tomlText = ""
+        if (Test-Path (Join-Path $RepoRoot "aeterna.toml")) {
+            $tomlText = Get-Content (Join-Path $RepoRoot "aeterna.toml") -Raw
+            if ($tomlText -match 'log_segment_dir\s*=\s*"([^"]+)"') {
+                $rawDir = $Matches[1]
+                if ($rawDir.StartsWith("./") -or $rawDir.StartsWith(".\")) {
+                    $auditDir = Join-Path $RepoRoot $rawDir.Substring(2)
+                } else {
+                    $auditDir = Join-Path $RepoRoot $rawDir
+                }
+            }
+        }
+        
+        $shipperEnabled = $false
+        if ($tomlText -match '(?s)\[shipper\].*?enabled\s*=\s*true') {
+            $shipperEnabled = $true
+        }
+        if ($ShipperEndpoint -ne "") {
+            $shipperEnabled = $true
+        }
+
+        if ($shipperEnabled) {
+            if (Test-Path $auditDir) {
+                $sigFiles = Get-ChildItem -Path $auditDir -Filter "*.sigillum" -ErrorAction SilentlyContinue
+                $pushedFiles = Get-ChildItem -Path $auditDir -Filter "*.sigillum.pushed" -ErrorAction SilentlyContinue
+                $pending = $sigFiles.Count - $pushedFiles.Count
+                if ($pending -lt 0) { $pending = 0 }
+                if ($pending -gt 0) {
+                    $shipperBanner = "shipper: pushing ($pending pending)"
+                } else {
+                    $shipperBanner = "shipper: idle"
+                }
+            } else {
+                $shipperBanner = "shipper: idle (no audit dir)"
+            }
+        } else {
+            $shipperBanner = "shipper: disabled"
+        }
+
+        return "$chainBanner | $shipperBanner"
+    }
+
     # ------ 4. Sentinel (foreground) -------------------------------------
     if (-not $SkipSentinel) {
+        $statusText = Get-StatusBanner
+        Write-Host ">>> Status Check: $statusText" -ForegroundColor Green
         Write-Host "[4/4] Launching Sentinel (foreground -- Ctrl-C to stop) ..." -ForegroundColor Cyan
         # Sentinel runs in the CURRENT shell so Ctrl-C reaches it and the
         # finally-block gets to run cleanly. @PyPreArgs splats the "-3"
@@ -523,7 +642,11 @@ try {
     } else {
         Write-Host "[4/4] -SkipSentinel: back-ends are up; exit with Ctrl-C to tear them down." -ForegroundColor DarkYellow
         # Keep the parent alive so Ctrl-C still triggers finally{}.
-        while ($true) { Start-Sleep -Seconds 3600 }
+        while ($true) {
+            $statusText = Get-StatusBanner
+            Write-Host ">>> Status Check: $statusText" -ForegroundColor Green
+            Start-Sleep -Seconds 10
+        }
     }
 }
 finally {

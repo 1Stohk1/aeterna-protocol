@@ -1,11 +1,11 @@
 {
-  "recorded_utc": 1776803190,
+  "recorded_utc": 1780997736,
   "entries": {
     "ETHICS.md": "6f7328d93600d944c891f7e550597967c5386443c2eb31a7f3d0d0139b8f9170",
     "LICENSE": "cf43cc94fd7daed0699a1203117d89a1a1274de74031416849980363532b9a43",
     "MANIFESTO.md": "cf25b41880ca8741e87245806848637324097babd81e455aafe804cbec140575",
-    "aeterna.toml": "45d0adb3858f5c80955948ee81f70c95681ae76593d67849702fe7a34c8fdbfd",
+    "aeterna.toml": "b63fff0a9543c756307ab17a6379498316ff6e69dbbecffe8a00d038f4f3bdfb",
     "docs/AGP-v1.md": "8308229a124d62dcd7568a5afee2aa1d09b49917f949f3b19acbdd0a54fa502f",
-    "scientific/Manifest.toml": "c4b69fc83213359adb629b99d1453e5a029ff9df29778aee9aa119188278cb41"
+    "scientific/Manifest.toml": "8976b1414b24c7bc5f05977df802d535b3250b477404f8e70a82e620f7d22afd"
   }
 }

@@ -38,6 +38,34 @@ service Signer {
     // Operator-signed resume: present a Dilithium-5 signature over the
     // outstanding challenge to clear a suspension.
     rpc Resume (ResumeRequest) returns (ResumeResponse);
+
+    // Execute a scientific task in a sandboxed container.
+    rpc ExecuteTask (ExecuteTaskRequest) returns (ExecuteTaskResponse);
+
+    // Unseal the vault by submitting a Shamir secret sharing share.
+    rpc Unseal (UnsealRequest) returns (UnsealResponse);
+}
+
+message UnsealRequest {
+    string share_hex = 1;
+}
+
+message UnsealResponse {
+    bool unsealed = 1;
+    uint32 shares_collected = 2;
+    uint32 threshold = 3;
+    string error = 4;
+}
+
+message ExecuteTaskRequest {
+    string task_json = 1;
+    string policy = 2;
+}
+
+message ExecuteTaskResponse {
+    string result_json = 1;
+    int32 producer_pid = 2;
+    string error = 3;
 }
 
 // --- Core sign path ---------------------------------------------------------
