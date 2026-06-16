@@ -97,12 +97,18 @@ pub mod error;
 pub mod handshake;
 pub mod identity;
 pub mod session;
+pub mod p2p_handshake;
 
 pub use bip39_derive::{derive_from_mnemonic, parse_mnemonic, SigillumKeys};
 pub use error::{Error, Result};
 pub use handshake::{HandshakeRequest, HandshakeResponse, OperatorEndpoint, SignerEndpoint};
 pub use identity::{SignerIdentityKey, SignerIdentityPublic};
 pub use session::{Session, SessionOptions, SessionStatus, Side};
+pub use p2p_handshake::{
+    P2PHandshakeRequest, P2PHandshakeResponse, P2PInitiator, P2PResponder,
+    KYBER_PUB_LEN, KYBER_CT_LEN,
+};
+
 
 /// Wire-format version for handshake messages. Bumping this is a
 /// coordinated upgrade across operator + signer.

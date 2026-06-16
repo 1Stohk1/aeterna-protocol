@@ -39,6 +39,7 @@ use tonic::transport::{Channel, Endpoint};
 use santuario_ratchet::{
     bip39_derive, HandshakeResponse, OperatorEndpoint, SignerIdentityPublic,
     SignerIdentityKey,
+    P2PHandshakeRequest, P2PHandshakeResponse, P2PInitiator, P2PResponder,
 };
 use santuario_signer::keystore::KeyStore;
 
@@ -158,6 +159,32 @@ enum Cmd {
     /// SSS Vault control tools.
     #[command(subcommand)]
     Vault(VaultCmd),
+
+    /// Gossip P2P network tools.
+    #[command(subcommand)]
+    P2p(P2pCmd),
+}
+
+/// `santuarioctl p2p <subcmd>`
+#[derive(Subcommand, Debug)]
+enum P2pCmd {
+    /// Initialize a P2P handshake, outputting base64 request and state.
+    HandshakeInit,
+    /// Accept a P2P handshake request, outputting base64 response and derived session key.
+    HandshakeResp {
+        /// The base64-encoded P2PHandshakeRequest.
+        #[arg(long)]
+        req: String,
+    },
+    /// Finalize a P2P handshake using response and state, outputting derived session key.
+    HandshakeFinal {
+        /// The base64-encoded P2PHandshakeResponse.
+        #[arg(long)]
+        resp: String,
+        /// The base64-encoded P2PInitiator state.
+        #[arg(long)]
+        state: String,
+    },
 }
 
 /// `santuarioctl vault <subcmd>`
@@ -344,13 +371,16 @@ enum ChainCmd {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
-    let channel = connect(&cli).await?;
-    let mut client = SignerClient::new(channel.clone());
-    let mut admin = AdminClient::new(channel);
+    let (mut client, mut admin) = if matches!(cli.cmd, Cmd::Key(_) | Cmd::Ship(_) | Cmd::P2p(_)) || (matches!(cli.cmd, Cmd::Tail { raw: true, .. })) {
+        (None, None)
+    } else {
+        let channel = connect(&cli).await?;
+        (Some(SignerClient::new(channel.clone())), Some(AdminClient::new(channel)))
+    };
 
     match cli.cmd {
         Cmd::Status => {
-            let resp = client.get_status(GetStatusRequest {}).await?.into_inner();
+            let resp = client.as_mut().unwrap().get_status(GetStatusRequest {}).await?.into_inner();
             // Acceptance banner — single line, space-separated key=value.
             let vault = if resp.vault_sealed {
                 "sealed"
@@ -391,6 +421,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Cmd::Audit { accept } => {
             let resp = client
+                .as_mut()
+                .unwrap()
                 .trigger_audit(TriggerAuditRequest {
                     accept_new_baseline: accept,
                 })
@@ -408,6 +440,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Cmd::Resume { token, operator } => {
             let resp = client
+                .as_mut()
+                .unwrap()
                 .resume(ResumeRequest {
                     token_hex: token,
                     operator,
@@ -422,7 +456,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Cmd::Metrics => {
-            let resp = admin.get_metrics(GetMetricsRequest {}).await?.into_inner();
+            let resp = admin.as_mut().unwrap().get_metrics(GetMetricsRequest {}).await?.into_inner();
             println!(
                 "node={} ts_utc={} schema={} window={}s",
                 resp.node_id, resp.ts_utc, resp.schema_version, resp.metric_window_seconds
@@ -462,6 +496,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 dump_segments_raw(&seg_dir)?;
             } else {
                 let resp = admin
+                    .as_mut()
+                    .unwrap()
                     .tail_audit_log(TailAuditLogRequest { limit })
                     .await?
                     .into_inner();
@@ -478,7 +514,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         Cmd::Peers => {
-            let resp = admin.list_peers(ListPeersRequest {}).await?.into_inner();
+            let resp = admin.as_mut().unwrap().list_peers(ListPeersRequest {}).await?.into_inner();
             println!(
                 "# {} peer(s) snapshot_utc={}",
                 resp.peers.len(),
@@ -508,15 +544,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
         Cmd::Key(sub) => handle_key(sub)?,
 
-        Cmd::Ratchet(sub) => handle_ratchet(sub, &mut admin).await?,
+        Cmd::Ratchet(sub) => handle_ratchet(sub, admin.as_mut().unwrap()).await?,
 
-        Cmd::Identity(sub) => handle_identity(sub, &mut admin).await?,
+        Cmd::Identity(sub) => handle_identity(sub, admin.as_mut().unwrap()).await?,
 
-        Cmd::Chain(sub) => handle_chain(sub, &mut client).await?,
+        Cmd::Chain(sub) => handle_chain(sub, client.as_mut().unwrap()).await?,
 
         Cmd::Ship(sub) => handle_ship(sub).await?,
 
-        Cmd::Vault(sub) => handle_vault(sub, &mut client).await?,
+        Cmd::Vault(sub) => handle_vault(sub, client.as_mut().unwrap()).await?,
+
+        Cmd::P2p(sub) => handle_p2p(sub)?,
     }
     Ok(())
 }
@@ -619,6 +657,43 @@ async fn handle_vault(
                     resp.shares_collected, resp.threshold
                 );
             }
+        }
+    }
+    Ok(())
+}
+
+fn handle_p2p(cmd: P2pCmd) -> Result<(), Box<dyn std::error::Error>> {
+    match cmd {
+        P2pCmd::HandshakeInit => {
+            let initiator = P2PInitiator::new();
+            let req = initiator.handshake_request();
+            use base64::Engine as _;
+            let req_b64 = base64::engine::general_purpose::STANDARD.encode(&req.to_bytes());
+            let state_b64 = base64::engine::general_purpose::STANDARD.encode(&initiator.export_state());
+            println!("P2P Handshake Initiated.");
+            println!("REQUEST: {}", req_b64);
+            println!("STATE: {}", state_b64);
+        }
+        P2pCmd::HandshakeResp { req } => {
+            use base64::Engine as _;
+            let req_bytes = base64::engine::general_purpose::STANDARD.decode(&req)?;
+            let request = P2PHandshakeRequest::from_bytes(&req_bytes)?;
+            let responder = P2PResponder::new();
+            let (resp, session_key) = responder.accept(request)?;
+            let resp_b64 = base64::engine::general_purpose::STANDARD.encode(&resp.to_bytes());
+            println!("P2P Handshake Response Generated.");
+            println!("RESPONSE: {}", resp_b64);
+            println!("SESSION_KEY: {}", hex::encode(session_key));
+        }
+        P2pCmd::HandshakeFinal { resp, state } => {
+            use base64::Engine as _;
+            let resp_bytes = base64::engine::general_purpose::STANDARD.decode(&resp)?;
+            let response = P2PHandshakeResponse::from_bytes(&resp_bytes)?;
+            let state_bytes = base64::engine::general_purpose::STANDARD.decode(&state)?;
+            let initiator = P2PInitiator::import_state(&state_bytes)?;
+            let session_key = initiator.finalize(response)?;
+            println!("P2P Handshake Finalized.");
+            println!("SESSION_KEY: {}", hex::encode(session_key));
         }
     }
     Ok(())
