@@ -19,7 +19,7 @@ resolver = "2"
 # Santuario sits in the signing path and unplanned upgrades are a supply-chain
 # risk. Every bump goes through the Terminale di Comando.
 [workspace.package]
-version      = "0.2.0"
+version      = "1.0.0"
 edition      = "2021"
 authors      = ["AETERNA Guardians"]
 license      = "AGPL-3.0-only WITH AETERNA-Prometheus-Clause"
