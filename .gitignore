@@ -90,3 +90,6 @@ aeterna.local.toml
 # --- IPFS / storage caches ---
 .ipfs/
 pin_cache/
+
+# --- LLM Context ---
+aeterna_context.txt
