@@ -30,7 +30,7 @@ class SantuarioClient:
         target: str | None = None,
         connect_timeout_seconds: float = 30.0,
         retry_interval_seconds: float = 0.5,
-        rpc_timeout_seconds: float = 10.0,
+        rpc_timeout_seconds: float = 120.0,
     ) -> None:
         self._target = target or self._default_target()
         self._connect_timeout_seconds = connect_timeout_seconds

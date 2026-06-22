@@ -82,7 +82,7 @@ class OllamaClient:
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=15.0) as response:
+            with urllib.request.urlopen(req, timeout=120.0) as response:
                 res_data = json.loads(response.read().decode("utf-8"))
                 embeddings = res_data.get("embeddings", [])
                 if embeddings:
@@ -109,7 +109,7 @@ class OllamaClient:
                 headers={"Content-Type": "application/json"},
                 method="POST"
             )
-            with urllib.request.urlopen(req, timeout=10.0) as response:
+            with urllib.request.urlopen(req, timeout=120.0) as response:
                 res_data = json.loads(response.read().decode("utf-8"))
                 emb = res_data.get("embedding")
                 if emb is None:
@@ -137,6 +137,6 @@ class OllamaClient:
             headers={"Content-Type": "application/json"},
             method="POST"
         )
-        with urllib.request.urlopen(req, timeout=90.0) as response:
+        with urllib.request.urlopen(req, timeout=300.0) as response:
             res_data = json.loads(response.read().decode("utf-8"))
             return res_data.get("response", "")
